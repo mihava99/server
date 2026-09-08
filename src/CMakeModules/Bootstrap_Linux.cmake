@@ -148,12 +148,20 @@ if (OMT_BUILD_FROM_SOURCE)
     # libvmx: the VMX video codec libomt depends on. Its own Linux build (build/buildlinuxx64.sh,
     # run from inside build/ per the repo's README) is a single clang++ invocation with a known,
     # fixed output path, so it's built directly here rather than through a wrapper script.
+    #
+    # PATCH_COMMAND: that clang++ invocation brace-initializes an unsigned char[] with negative
+    # int literals (e.g. {112,-86,-26,0,...}), which Clang - unlike GCC/MSVC - treats as a hard
+    # -Wc++11-narrowing *error* rather than a warning, failing the build outright even with no
+    # -Werror involved (confirmed against a real build on Fedora 44). -Wno-c++11-narrowing is the
+    # standard fix for this exact class of "MSVC-style code ported to Clang" issue. Patching our
+    # own invocation rather than upstream's file, since we don't maintain that repo.
     casparcg_add_external_project(libvmx-src)
     ExternalProject_Add(libvmx-src
         GIT_REPOSITORY https://github.com/openmediatransport/libvmx.git
         GIT_TAG master
         GIT_SHALLOW TRUE
         DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
+        PATCH_COMMAND sed -i "s/-mbmi -shared/-mbmi -Wno-c++11-narrowing -shared/" <SOURCE_DIR>/build/buildlinuxx64.sh
         CONFIGURE_COMMAND ""
         BUILD_IN_SOURCE TRUE
         BUILD_COMMAND sh -c "cd build && bash buildlinuxx64.sh"
