@@ -47,10 +47,19 @@ const char* LIBRARY_FILENAME = "libomt.so";
 
 void not_installed()
 {
+#ifdef _WIN32
     CASPAR_THROW_EXCEPTION(
         not_supported() << msg_info(L"libomt not available. Install the Open Media Transport (OMT) runtime "
-                                    L"(https://github.com/OpenMediaTransport/OpenMediaTransport) to use OMT "
+                                    L"(https://github.com/openmediatransport/libomtnet/releases) to use OMT "
                                     L"sources/consumers."));
+#else
+    CASPAR_THROW_EXCEPTION(not_supported()
+                           << msg_info(L"libomt not available. Upstream doesn't publish a prebuilt Linux binary - "
+                                       L"build libomt (https://github.com/openmediatransport/libomt) and libvmx "
+                                       L"(https://github.com/openmediatransport/libvmx) from source and install "
+                                       L"libomt.so where the system linker can find it, to use OMT sources/"
+                                       L"consumers."));
+#endif
 }
 
 void not_compatible()

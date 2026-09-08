@@ -113,6 +113,31 @@ casparcg_add_runtime_dependency("${FFMPEG_BIN_PATH}/swscale-9.dll")
 casparcg_add_runtime_dependency("${FFMPEG_BIN_PATH}/ffmpeg.exe")
 casparcg_add_runtime_dependency("${FFMPEG_BIN_PATH}/ffprobe.exe")
 
+# OMT (Open Media Transport) - prebuilt SDK for the optional omt module. libomt is loaded
+# dynamically at runtime (see src/modules/omt/util/omt_util.cpp), so none of this is required to
+# build or link CasparCG itself; it only fetches libomt.dll/libvmx.dll so they can be bundled next
+# to the server executable, the same way the module's own build already ships next to it. Override
+# OMT_SDK_DIR (e.g. via -D) to point at a local extraction of the binary release bundle below
+# (i.e. a folder containing Libraries/Winx64/libomt.dll etc.) instead of downloading it.
+if (NOT DEFINED OMT_SDK_DIR)
+	casparcg_add_external_project(omt-sdk)
+	ExternalProject_Add(omt-sdk
+		URL https://github.com/openmediatransport/libomtnet/releases/download/v1.0.0.19/OpenMediaTransport.Binaries.Release.v1.0.0.19.zip
+		URL_HASH SHA256=c62460174499dabe703e3e57372daf5f1dd95f890355d11e30052b9ed35bdac4
+		DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
+		CONFIGURE_COMMAND ""
+		BUILD_COMMAND ""
+		INSTALL_COMMAND ""
+	)
+	ExternalProject_Get_Property(omt-sdk SOURCE_DIR)
+	set(OMT_SDK_DIR "${SOURCE_DIR}")
+	# Distinguishes "we just fetched this" from a developer-supplied OMT_SDK_DIR: the fetched
+	# path's contents only exist once the omt-sdk build step actually runs (after configure time),
+	# so the omt module must trust the build-order dependency rather than check EXISTS itself -
+	# otherwise a fresh checkout's very first configure would permanently skip bundling the DLLs.
+	set(OMT_SDK_FETCHED TRUE)
+endif()
+
 get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
 set(EXTERNAL_CMAKE_ARGS "")

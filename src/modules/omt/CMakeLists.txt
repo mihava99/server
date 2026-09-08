@@ -40,25 +40,27 @@ source_group(sources\\util util/*)
 source_group(sources\\interop interop/*)
 source_group(sources ./*)
 
-# The libomt/libvmx runtime is loaded dynamically at process runtime (see util/omt_util.cpp),
-# so it isn't required at build/link time on any platform. On a Windows dev machine that has a
-# local checkout of https://github.com/OpenMediaTransport/OpenMediaTransport, optionally copy its
-# prebuilt DLLs next to the server executable purely for local testing convenience.
-if (MSVC)
-    if (NOT DEFINED OMT_SDK_DIR)
-        set(OMT_SDK_DIR "D:/Github/OpenMediaTransport")
-    endif()
-
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
+# The libomt/libvmx runtime is loaded dynamically at process runtime (see util/omt_util.cpp), so
+# it isn't required at build/link time on any platform. On Windows, OMT_SDK_DIR is fetched
+# automatically from GitHub by Bootstrap_Windows.cmake (or points at a developer-supplied local
+# checkout, if OMT_SDK_DIR was set before configuring) - copy its prebuilt DLLs next to the server
+# executable so a normal build can send/receive OMT out of the box.
+if (MSVC AND DEFINED OMT_SDK_DIR)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
         set(OMT_LIB_DIR "${OMT_SDK_DIR}/Libraries/Winarm64")
     else()
         set(OMT_LIB_DIR "${OMT_SDK_DIR}/Libraries/Winx64")
     endif()
 
-    if (EXISTS "${OMT_LIB_DIR}/libomt.dll")
+    # OMT_SDK_FETCHED means Bootstrap_Windows.cmake just declared this as an ExternalProject: its
+    # files only appear on disk once that project's build step actually runs, so EXISTS here (a
+    # configure-time check) would wrongly skip bundling on a fresh checkout's first configure -
+    # trust the build-order dependency instead. A developer-supplied OMT_SDK_DIR has no such
+    # project backing it, so it keeps the defensive EXISTS check.
+    if (OMT_SDK_FETCHED OR EXISTS "${OMT_LIB_DIR}/libomt.dll")
         casparcg_add_runtime_dependency("${OMT_LIB_DIR}/libomt.dll")
     endif()
-    if (EXISTS "${OMT_LIB_DIR}/libvmx.dll")
+    if (OMT_SDK_FETCHED OR EXISTS "${OMT_LIB_DIR}/libvmx.dll")
         casparcg_add_runtime_dependency("${OMT_LIB_DIR}/libvmx.dll")
     endif()
 endif()
