@@ -38,8 +38,10 @@
 
 extern "C" {
 #include <libavutil/channel_layout.h>
+#include <libavutil/pixfmt.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
 }
 
 #include <algorithm>
@@ -101,6 +103,56 @@ const wchar_t* alpha_mode_name(alpha_mode mode)
     }
 }
 
+// Which uncompressed pixel format to hand to omt_send. BGRA is simplest (direct passthrough of
+// CasparCG's own buffer) but some receivers' BGRA-with-alpha decode path is buggy (e.g. as of this
+// writing OBS's OMT source can fail to display anything at all once an alpha channel is present).
+// The YUV variants go through libswscale and are offered as a compatibility escape hatch - UYVA in
+// particular is the alpha-carrying alternative to try when BGRA+alpha doesn't work.
+enum class video_codec
+{
+    bgra,
+    uyvy,
+    yuy2,
+    uyva,
+    nv12,
+    yv12
+};
+
+video_codec parse_video_codec(const std::wstring& value)
+{
+    if (boost::iequals(value, L"uyvy"))
+        return video_codec::uyvy;
+    if (boost::iequals(value, L"yuy2"))
+        return video_codec::yuy2;
+    if (boost::iequals(value, L"uyva"))
+        return video_codec::uyva;
+    if (boost::iequals(value, L"nv12"))
+        return video_codec::nv12;
+    if (boost::iequals(value, L"yv12"))
+        return video_codec::yv12;
+    return video_codec::bgra;
+}
+
+const wchar_t* video_codec_name(video_codec codec)
+{
+    switch (codec) {
+        case video_codec::uyvy:
+            return L"UYVY";
+        case video_codec::yuy2:
+            return L"YUY2";
+        case video_codec::uyva:
+            return L"UYVA";
+        case video_codec::nv12:
+            return L"NV12";
+        case video_codec::yv12:
+            return L"YV12";
+        default:
+            return L"BGRA";
+    }
+}
+
+bool video_codec_supports_alpha(video_codec codec) { return codec == video_codec::bgra || codec == video_codec::uyva; }
+
 // 16.16 fixed-point reciprocal of alpha/255, used to unpremultiply BGRA pixels: straight = premultiplied * 255 / alpha.
 struct unpremultiply_reciprocal_table
 {
@@ -142,6 +194,7 @@ struct omt_consumer : public core::frame_consumer
     const std::string        name_utf8_;
     const OMTQuality         quality_;
     const alpha_mode         alpha_mode_;
+    const video_codec        codec_;
 
     core::video_format_desc format_desc_;
     int                     channel_index_ = 0;
@@ -149,12 +202,22 @@ struct omt_consumer : public core::frame_consumer
     omt_lib*             lib_  = nullptr;
     omt_send_t*          send_ = nullptr;
     std::vector<uint8_t> straight_alpha_buffer_;
+    std::vector<uint8_t> codec_buffer_;
 
     struct swr_deleter
     {
         void operator()(SwrContext* p) { swr_free(&p); }
     };
     std::unique_ptr<SwrContext, swr_deleter> swr_;
+
+    struct sws_deleter
+    {
+        void operator()(SwsContext* p) { sws_freeContext(p); }
+    };
+    std::unique_ptr<SwsContext, sws_deleter> sws_;
+    AVPixelFormat                            sws_format_ = AV_PIX_FMT_NONE;
+    int                                       sws_width_  = 0;
+    int                                       sws_height_ = 0;
 
     std::mutex                    buffer_mutex_;
     std::condition_variable       buffer_cond_;
@@ -167,12 +230,13 @@ struct omt_consumer : public core::frame_consumer
     caspar::timer                       frame_timer_;
 
   public:
-    omt_consumer(std::wstring name, OMTQuality quality, alpha_mode alpha)
+    omt_consumer(std::wstring name, OMTQuality quality, alpha_mode alpha, video_codec codec)
         : instance_no_(instances_++)
         , name_(!name.empty() ? name : default_omt_name())
         , name_utf8_(u8(!name.empty() ? name : default_omt_name()))
         , quality_(quality)
         , alpha_mode_(alpha)
+        , codec_(codec)
     {
         lib_ = omt::load_library();
 
@@ -229,7 +293,17 @@ struct omt_consumer : public core::frame_consumer
 
         graph_->set_text(print());
 
-        CASPAR_LOG(info) << print() << L" sending " << alpha_mode_name(alpha_mode_) << L" alpha.";
+        if (video_codec_supports_alpha(codec_)) {
+            CASPAR_LOG(info) << print() << L" sending " << video_codec_name(codec_) << L" with "
+                             << alpha_mode_name(alpha_mode_) << L" alpha.";
+        } else {
+            CASPAR_LOG(info) << print() << L" sending " << video_codec_name(codec_) << L" (no alpha channel).";
+            if (alpha_mode_ != alpha_mode::none) {
+                CASPAR_LOG(warning) << print() << L" " << video_codec_name(codec_)
+                                    << L" cannot carry an alpha channel; ALPHA " << alpha_mode_name(alpha_mode_)
+                                    << L" is ignored.";
+            }
+        }
 
         running_    = true;
         send_thread_ = std::thread([this] { run(); });
@@ -260,6 +334,18 @@ struct omt_consumer : public core::frame_consumer
         }
     }
 
+    void ensure_sws(AVPixelFormat dst_format, int width, int height)
+    {
+        if (sws_ && sws_format_ == dst_format && sws_width_ == width && sws_height_ == height)
+            return;
+
+        sws_format_ = dst_format;
+        sws_width_  = width;
+        sws_height_ = height;
+        sws_.reset(sws_getContext(
+            width, height, AV_PIX_FMT_BGRA, width, height, dst_format, SWS_POINT, nullptr, nullptr, nullptr));
+    }
+
     void send_video(const core::const_frame& frame)
     {
         auto image       = frame.image_data(0);
@@ -267,43 +353,135 @@ struct omt_consumer : public core::frame_consumer
         if (!send_ || data_length == 0)
             return;
 
-        const uint8_t* data  = image.data();
-        OMTVideoFlags  flags = OMTVideoFlags_None;
+        const uint8_t* bgra   = image.data();
+        int            width  = static_cast<int>(format_desc_.width);
+        int            height = static_cast<int>(format_desc_.height);
 
-        switch (alpha_mode_) {
-            case alpha_mode::none:
-                // Leave the Alpha flag unset - per the OMT spec this tells receivers the 4th byte
-                // is padding (BGRX rather than BGRA), which sidesteps alpha handling bugs entirely
-                // in receivers that get either convention wrong.
-                break;
-            case alpha_mode::straight:
-                // CasparCG's own buffers are premultiplied; convert a copy to straight alpha for
-                // receivers (e.g. OBS) that don't understand OMTVideoFlags_PreMultiplied.
-                flags = OMTVideoFlags_Alpha;
-                straight_alpha_buffer_.assign(data, data + data_length);
-                unpremultiply_bgra(straight_alpha_buffer_.data(), straight_alpha_buffer_.size());
-                data = straight_alpha_buffer_.data();
-                break;
-            case alpha_mode::premultiplied:
-            default:
-                flags = static_cast<OMTVideoFlags>(OMTVideoFlags_Alpha | OMTVideoFlags_PreMultiplied);
-                break;
+        OMTVideoFlags flags = OMTVideoFlags_None;
+
+        if (video_codec_supports_alpha(codec_)) {
+            switch (alpha_mode_) {
+                case alpha_mode::none:
+                    // Leave the Alpha flag unset - per the OMT spec this tells receivers the alpha
+                    // data is meaningless (BGRX/UYVY rather than BGRA/UYVA).
+                    break;
+                case alpha_mode::straight:
+                    // CasparCG's own buffers are premultiplied; convert a copy to straight alpha for
+                    // receivers that don't understand OMTVideoFlags_PreMultiplied.
+                    flags = OMTVideoFlags_Alpha;
+                    straight_alpha_buffer_.assign(bgra, bgra + data_length);
+                    unpremultiply_bgra(straight_alpha_buffer_.data(), straight_alpha_buffer_.size());
+                    bgra = straight_alpha_buffer_.data();
+                    break;
+                case alpha_mode::premultiplied:
+                default:
+                    flags = static_cast<OMTVideoFlags>(OMTVideoFlags_Alpha | OMTVideoFlags_PreMultiplied);
+                    break;
+            }
         }
 
         OMTMediaFrame video_frame = {};
         video_frame.Type          = OMTFrameType_Video;
         video_frame.Timestamp     = -1; // Let the sender generate accurate timestamps and pace to FrameRateN/D.
-        video_frame.Codec         = OMTCodec_BGRA;
-        video_frame.Width         = static_cast<int>(format_desc_.width);
-        video_frame.Height        = static_cast<int>(format_desc_.height);
-        video_frame.Stride        = static_cast<int>(format_desc_.width) * 4;
+        video_frame.Width         = width;
+        video_frame.Height        = height;
         video_frame.Flags         = flags;
         video_frame.FrameRateN    = format_desc_.framerate.numerator();
         video_frame.FrameRateD    = format_desc_.framerate.denominator();
-        video_frame.AspectRatio   = static_cast<float>(format_desc_.square_width) / static_cast<float>(format_desc_.square_height);
-        video_frame.ColorSpace    = format_desc_.height >= 720 ? OMTColorSpace_BT709 : OMTColorSpace_BT601;
-        video_frame.Data          = const_cast<uint8_t*>(data);
-        video_frame.DataLength    = static_cast<int>(data_length);
+        video_frame.AspectRatio = static_cast<float>(format_desc_.square_width) / static_cast<float>(format_desc_.square_height);
+        video_frame.ColorSpace  = height >= 720 ? OMTColorSpace_BT709 : OMTColorSpace_BT601;
+
+        switch (codec_) {
+            case video_codec::uyvy:
+            case video_codec::yuy2: {
+                AVPixelFormat dst_format = codec_ == video_codec::uyvy ? AV_PIX_FMT_UYVY422 : AV_PIX_FMT_YUYV422;
+                codec_buffer_.resize(static_cast<size_t>(width) * height * 2);
+                ensure_sws(dst_format, width, height);
+
+                const uint8_t* src_planes[1] = {bgra};
+                int            src_stride[1] = {width * 4};
+                uint8_t*       dst_planes[1] = {codec_buffer_.data()};
+                int            dst_stride[1] = {width * 2};
+                sws_scale(sws_.get(), src_planes, src_stride, 0, height, dst_planes, dst_stride);
+
+                video_frame.Codec      = codec_ == video_codec::uyvy ? OMTCodec_UYVY : OMTCodec_YUY2;
+                video_frame.Stride     = width * 2;
+                video_frame.Data       = codec_buffer_.data();
+                video_frame.DataLength = static_cast<int>(codec_buffer_.size());
+                break;
+            }
+            case video_codec::uyva: {
+                bool   include_alpha = (flags & OMTVideoFlags_Alpha) != 0;
+                size_t uyvy_size     = static_cast<size_t>(width) * height * 2;
+                codec_buffer_.resize(uyvy_size + (include_alpha ? static_cast<size_t>(width) * height : 0));
+                ensure_sws(AV_PIX_FMT_UYVY422, width, height);
+
+                const uint8_t* src_planes[1] = {bgra};
+                int            src_stride[1] = {width * 4};
+                uint8_t*       dst_planes[1] = {codec_buffer_.data()};
+                int            dst_stride[1] = {width * 2};
+                sws_scale(sws_.get(), src_planes, src_stride, 0, height, dst_planes, dst_stride);
+
+                if (include_alpha) {
+                    uint8_t* alpha_plane = codec_buffer_.data() + uyvy_size;
+                    for (int i = 0; i < width * height; ++i)
+                        alpha_plane[i] = bgra[i * 4 + 3];
+                    video_frame.Codec = OMTCodec_UYVA;
+                } else {
+                    video_frame.Codec = OMTCodec_UYVY; // No alpha data was appended - advertise plain UYVY.
+                }
+                video_frame.Stride     = width * 2;
+                video_frame.Data       = codec_buffer_.data();
+                video_frame.DataLength = static_cast<int>(codec_buffer_.size());
+                break;
+            }
+            case video_codec::nv12: {
+                size_t y_size = static_cast<size_t>(width) * height;
+                codec_buffer_.resize(y_size + y_size / 2);
+                ensure_sws(AV_PIX_FMT_NV12, width, height);
+
+                const uint8_t* src_planes[1] = {bgra};
+                int            src_stride[1] = {width * 4};
+                uint8_t*       dst_planes[2] = {codec_buffer_.data(), codec_buffer_.data() + y_size};
+                int            dst_stride[2] = {width, width};
+                sws_scale(sws_.get(), src_planes, src_stride, 0, height, dst_planes, dst_stride);
+
+                video_frame.Codec      = OMTCodec_NV12;
+                video_frame.Stride     = width;
+                video_frame.Data       = codec_buffer_.data();
+                video_frame.DataLength = static_cast<int>(codec_buffer_.size());
+                break;
+            }
+            case video_codec::yv12: {
+                size_t y_size  = static_cast<size_t>(width) * height;
+                size_t uv_size = y_size / 4;
+                codec_buffer_.resize(y_size + uv_size * 2);
+                ensure_sws(AV_PIX_FMT_YUV420P, width, height);
+
+                const uint8_t* src_planes[1] = {bgra};
+                int            src_stride[1] = {width * 4};
+                uint8_t*       v_plane       = codec_buffer_.data() + y_size;
+                uint8_t*       u_plane       = v_plane + uv_size;
+                // AV_PIX_FMT_YUV420P's plane order is Y,U,V - swapping the destination pointers for
+                // the chroma planes makes sws_scale write Y,V,U instead, i.e. YV12.
+                uint8_t* dst_planes[3] = {codec_buffer_.data(), v_plane, u_plane};
+                int      dst_stride[3] = {width, width / 2, width / 2};
+                sws_scale(sws_.get(), src_planes, src_stride, 0, height, dst_planes, dst_stride);
+
+                video_frame.Codec      = OMTCodec_YV12;
+                video_frame.Stride     = width;
+                video_frame.Data       = codec_buffer_.data();
+                video_frame.DataLength = static_cast<int>(codec_buffer_.size());
+                break;
+            }
+            case video_codec::bgra:
+            default:
+                video_frame.Codec      = OMTCodec_BGRA;
+                video_frame.Stride     = width * 4;
+                video_frame.Data       = const_cast<uint8_t*>(bgra);
+                video_frame.DataLength = static_cast<int>(data_length);
+                break;
+        }
 
         lib_->send(send_, &video_frame);
     }
@@ -372,6 +550,7 @@ struct omt_consumer : public core::frame_consumer
     {
         core::monitor::state state;
         state["omt/name"]  = u8(name_);
+        state["omt/codec"] = u8(video_codec_name(codec_));
         state["omt/alpha"] = u8(alpha_mode_name(alpha_mode_));
         return state;
     }
@@ -391,8 +570,9 @@ create_omt_consumer(const std::vector<std::wstring>&                         par
     std::wstring name    = get_param(L"NAME", params, L"");
     std::wstring quality = get_param(L"QUALITY", params, L"");
     std::wstring alpha   = get_param(L"ALPHA", params, L"");
+    std::wstring codec   = get_param(L"CODEC", params, L"");
 
-    return spl::make_shared<omt_consumer>(name, parse_quality(quality), parse_alpha_mode(alpha));
+    return spl::make_shared<omt_consumer>(name, parse_quality(quality), parse_alpha_mode(alpha), parse_video_codec(codec));
 }
 
 spl::shared_ptr<core::frame_consumer>
@@ -404,8 +584,9 @@ create_preconfigured_omt_consumer(const boost::property_tree::wptree&           
     auto name    = element.get(L"name", L"");
     auto quality = element.get(L"quality", L"");
     auto alpha   = element.get(L"alpha", L"");
+    auto codec   = element.get(L"codec", L"");
 
-    return spl::make_shared<omt_consumer>(name, parse_quality(quality), parse_alpha_mode(alpha));
+    return spl::make_shared<omt_consumer>(name, parse_quality(quality), parse_alpha_mode(alpha), parse_video_codec(codec));
 }
 
 }} // namespace caspar::omt
