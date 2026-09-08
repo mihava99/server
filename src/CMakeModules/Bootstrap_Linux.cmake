@@ -171,6 +171,30 @@ if (OMT_BUILD_FROM_SOURCE)
     ExternalProject_Get_Property(libvmx-src SOURCE_DIR)
     set(OMT_LIBVMX_SO "${SOURCE_DIR}/build/libvmx.so")
 
+    # libomtnet: libomt.csproj references this via a plain <Reference HintPath="..\libomtnet\bin\
+    # Release\netstandard2.0\libomtnet.dll">, i.e. a prebuilt DLL expected at a fixed path *relative
+    # to libomt's own checkout* - not a project reference, so it isn't fetched/built automatically
+    # as part of libomt's own build (confirmed by a real build failure: CS0246 on every OMT* type,
+    # all of which actually live in libomtnet). Both checkouts' SOURCE_DIR are pinned explicitly
+    # below (rather than left at ExternalProject's per-target default, which would put them under
+    # unrelated *-prefix trees) so they land as real filesystem siblings and that relative
+    # HintPath resolves correctly.
+    set(OMT_NET_SRC_ROOT "${CMAKE_CURRENT_BINARY_DIR}/omt-src")
+
+    casparcg_add_external_project(libomtnet)
+    ExternalProject_Add(libomtnet
+        GIT_REPOSITORY https://github.com/openmediatransport/libomtnet.git
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+        DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
+        SOURCE_DIR "${OMT_NET_SRC_ROOT}/libomtnet"
+        CONFIGURE_COMMAND ""
+        BUILD_IN_SOURCE TRUE
+        BUILD_COMMAND sh -c "cd build && dotnet build ../libomtnet.sln -c Release"
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS "${OMT_NET_SRC_ROOT}/libomtnet/bin/Release/netstandard2.0/libomtnet.dll"
+    )
+
     # libomt: see omt_build_libomt_linux.sh for why this needs a wrapper rather than a direct
     # BUILD_COMMAND - dotnet publish's exact output path isn't fixed the way libvmx's is.
     casparcg_add_external_project(libomt-src)
@@ -179,15 +203,15 @@ if (OMT_BUILD_FROM_SOURCE)
         GIT_TAG master
         GIT_SHALLOW TRUE
         DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
+        SOURCE_DIR "${OMT_NET_SRC_ROOT}/libomt"
         CONFIGURE_COMMAND ""
         BUILD_IN_SOURCE TRUE
         BUILD_COMMAND bash ${CMAKE_CURRENT_LIST_DIR}/omt_build_libomt_linux.sh
         INSTALL_COMMAND ""
-        DEPENDS libvmx-src
-        BUILD_BYPRODUCTS "<SOURCE_DIR>/libomt.so"
+        DEPENDS libvmx-src libomtnet
+        BUILD_BYPRODUCTS "${OMT_NET_SRC_ROOT}/libomt/libomt.so"
     )
-    ExternalProject_Get_Property(libomt-src SOURCE_DIR)
-    set(OMT_LIBOMT_SO "${SOURCE_DIR}/libomt.so")
+    set(OMT_LIBOMT_SO "${OMT_NET_SRC_ROOT}/libomt/libomt.so")
 
     install(FILES "${OMT_LIBVMX_SO}" TYPE LIB)
     install(FILES "${OMT_LIBOMT_SO}" TYPE LIB)
