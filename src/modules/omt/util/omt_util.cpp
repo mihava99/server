@@ -22,6 +22,7 @@
 #include <common/utf.h>
 
 #include <boost/filesystem.hpp>
+#include <boost/locale.hpp>
 
 #include <chrono>
 #include <memory>
@@ -116,6 +117,8 @@ omt_lib* load_library()
         ok &= resolve(module, "omt_send_create", result->send_create);
         ok &= resolve(module, "omt_send_destroy", result->send_destroy);
         ok &= resolve(module, "omt_send", result->send);
+        ok &= resolve(module, "omt_send_getaddress", result->send_getaddress);
+        ok &= resolve(module, "omt_send_connections", result->send_connections);
 
         if (!ok)
             not_compatible();
@@ -140,6 +143,53 @@ std::unique_lock<std::mutex> serialize_create_call()
     last_call = std::chrono::steady_clock::now();
 
     return lock;
+}
+
+std::wstring make_ascii_safe_name(const std::wstring& name)
+{
+    auto is_ascii = [](const std::wstring& s) {
+        for (wchar_t c : s) {
+            if (static_cast<unsigned int>(c) > 127)
+                return false;
+        }
+        return true;
+    };
+
+    if (is_ascii(name))
+        return name;
+
+    std::wstring result = name;
+
+    try {
+        // A locale of our own, independent of whatever categories the process' global locale
+        // was set up with (main.cpp only installs the "codepage" category) - normalize() needs
+        // the "convert" category, which the generator's default set includes.
+        static const boost::locale::generator gen;
+        static const std::locale              loc = gen("en_US.UTF-8");
+
+        // Decompose e.g. U+0102 (Latin Capital Letter A with Breve, "Ă") into 'A' followed by a
+        // combining breve, then drop the combining mark below to leave the plain base letter.
+        std::wstring decomposed = boost::locale::normalize(name, boost::locale::norm_nfd, loc);
+
+        result.clear();
+        result.reserve(decomposed.size());
+        for (wchar_t c : decomposed) {
+            if (c >= 0x0300 && c <= 0x036F)
+                continue; // Combining diacritical mark.
+            result.push_back(c);
+        }
+    } catch (...) {
+        // Normalization unavailable for some reason - fall through to the replacement loop below,
+        // which still guarantees an ASCII-safe (if less faithful) result.
+        result = name;
+    }
+
+    for (wchar_t& c : result) {
+        if (static_cast<unsigned int>(c) > 127)
+            c = L'_';
+    }
+
+    return result;
 }
 
 std::vector<std::string> get_current_sources()

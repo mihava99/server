@@ -38,9 +38,11 @@ struct omt_lib
     decltype(&::omt_receive_destroy) receive_destroy;
     decltype(&::omt_receive)         receive;
 
-    decltype(&::omt_send_create)  send_create;
-    decltype(&::omt_send_destroy) send_destroy;
-    decltype(&::omt_send)         send;
+    decltype(&::omt_send_create)     send_create;
+    decltype(&::omt_send_destroy)    send_destroy;
+    decltype(&::omt_send)            send;
+    decltype(&::omt_send_getaddress) send_getaddress;
+    decltype(&::omt_send_connections) send_connections;
 };
 
 // Loads (once) and returns the libomt runtime, or throws caspar::not_supported if it
@@ -61,6 +63,18 @@ omt_lib* load_library();
 // genuine CasparCG-side race for calls made after startup (e.g. one channel reinitializing its
 // consumers on a video-format change while another handles an AMCP ADD/REMOVE concurrently).
 std::unique_lock<std::mutex> serialize_create_call();
+
+// Returns an ASCII-safe transliteration of `name` for use as an OMT sender name: diacritics are
+// stripped (e.g. "GRAFICĂ" -> "GRAFICA"), and anything still non-ASCII afterwards (scripts with no
+// Latin base letter to fall back to) is replaced with '_'. Returns `name` unchanged if it's already
+// pure ASCII.
+//
+// Confirmed libomt bug: a sender name containing non-ASCII characters (e.g. Romanian/Central-
+// European diacritics) breaks that sender's discovery entirely - not just its display casing -
+// once more than one sender exists within the same process. Only affects sending; a producer's
+// connection target name must be left exactly as given, since it has to match whatever the remote
+// sender actually announces (which may itself be mangled by the same bug).
+std::wstring make_ascii_safe_name(const std::wstring& name);
 
 // Returns the list of OMT sources (Address Name) currently visible via discovery.
 std::vector<std::string> get_current_sources();
