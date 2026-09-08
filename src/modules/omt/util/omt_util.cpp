@@ -1,0 +1,156 @@
+/*
+ * This file is part of CasparCG (www.casparcg.com).
+ *
+ * CasparCG is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * CasparCG is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with CasparCG. If not, see <http://www.gnu.org/licenses/>.
+ */
+#include "omt_util.h"
+
+#include <common/env.h>
+#include <common/except.h>
+#include <common/log.h>
+#include <common/utf.h>
+
+#include <boost/filesystem.hpp>
+
+#include <memory>
+#include <sstream>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+namespace caspar { namespace omt {
+
+namespace {
+
+#ifdef _WIN32
+const wchar_t* LIBRARY_FILENAME = L"libomt.dll";
+#else
+const char* LIBRARY_FILENAME = "libomt.so";
+#endif
+
+void not_installed()
+{
+    CASPAR_THROW_EXCEPTION(
+        not_supported() << msg_info(L"libomt not available. Install the Open Media Transport (OMT) runtime "
+                                    L"(https://github.com/OpenMediaTransport/OpenMediaTransport) to use OMT "
+                                    L"sources/consumers."));
+}
+
+void not_compatible()
+{
+    CASPAR_THROW_EXCEPTION(
+        not_supported() << msg_info(L"Failed to resolve one or more functions in libomt. The installed OMT "
+                                    L"runtime may be incompatible with this version of CasparCG."));
+}
+
+template <typename Fn>
+bool resolve(void* module, const char* name, Fn& out)
+{
+#ifdef _WIN32
+    out = reinterpret_cast<Fn>(GetProcAddress(reinterpret_cast<HMODULE>(module), name));
+#else
+    out = reinterpret_cast<Fn>(dlsym(module, name));
+#endif
+    return out != nullptr;
+}
+
+void* open_library()
+{
+#ifdef _WIN32
+    HMODULE module = LoadLibraryW(LIBRARY_FILENAME);
+    if (!module) {
+        auto dll_path = boost::filesystem::path(env::initial_folder()) / LIBRARY_FILENAME;
+        module         = LoadLibraryW(dll_path.c_str());
+    }
+    if (!module)
+        not_installed();
+
+    CASPAR_LOG(info) << L"Loaded " << LIBRARY_FILENAME;
+    static std::shared_ptr<void> keep_alive(module, FreeLibrary);
+    return module;
+#else
+    void* handle = dlopen(LIBRARY_FILENAME, RTLD_LOCAL | RTLD_LAZY);
+    if (!handle) {
+        auto dll_path = boost::filesystem::path(env::initial_folder()) / LIBRARY_FILENAME;
+        handle         = dlopen(dll_path.c_str(), RTLD_LOCAL | RTLD_LAZY);
+    }
+    if (!handle)
+        not_installed();
+
+    CASPAR_LOG(info) << u16(LIBRARY_FILENAME);
+    static std::shared_ptr<void> keep_alive(handle, dlclose);
+    return handle;
+#endif
+}
+
+} // namespace
+
+omt_lib* load_library()
+{
+    static omt_lib* lib = []() -> omt_lib* {
+        void* module = open_library();
+
+        auto result = std::make_unique<omt_lib>();
+
+        bool ok = true;
+        ok &= resolve(module, "omt_discovery_getaddresses", result->discovery_getaddresses);
+        ok &= resolve(module, "omt_receive_create", result->receive_create);
+        ok &= resolve(module, "omt_receive_destroy", result->receive_destroy);
+        ok &= resolve(module, "omt_receive", result->receive);
+        ok &= resolve(module, "omt_send_create", result->send_create);
+        ok &= resolve(module, "omt_send_destroy", result->send_destroy);
+        ok &= resolve(module, "omt_send", result->send);
+
+        if (!ok)
+            not_compatible();
+
+        return result.release();
+    }();
+
+    return lib;
+}
+
+std::vector<std::string> get_current_sources()
+{
+    std::vector<std::string> result;
+
+    int    count     = 0;
+    char** addresses = load_library()->discovery_getaddresses(&count);
+
+    for (int n = 0; n < count; ++n) {
+        if (addresses && addresses[n]) {
+            result.emplace_back(addresses[n]);
+        }
+    }
+
+    return result;
+}
+
+std::wstring list_command(protocol::amcp::command_context& /*ctx*/)
+{
+    auto sources = get_current_sources();
+
+    std::wstringstream reply;
+    reply << L"200 OMT LIST OK\r\n";
+    for (size_t n = 0; n < sources.size(); ++n) {
+        reply << (n + 1) << L" \"" << sources[n].c_str() << L"\"\r\n";
+    }
+    reply << L"\r\n";
+    return reply.str();
+}
+
+}} // namespace caspar::omt
