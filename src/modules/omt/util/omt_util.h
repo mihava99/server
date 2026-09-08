@@ -20,6 +20,7 @@
 
 #include <protocol/amcp/amcp_command_context.h>
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,21 @@ struct omt_lib
 // Loads (once) and returns the libomt runtime, or throws caspar::not_supported if it
 // couldn't be found/loaded.
 omt_lib* load_library();
+
+// Serializes calls into omt_send_create/omt_receive_create (and their matching destroy calls)
+// process-wide, and enforces a short minimum spacing between them.
+//
+// Some versions of libomt appear to have an internal bug where the discovery name (hostname +
+// given name) of every sender created after the first one *within the same process* loses its
+// case - e.g. three CasparCG channels on host "M-SV1" showed "M-SV1 (CASPAR VIDEO)" for the first
+// one, then "m-sv1 (cg1)" and "m-sv1 (cg2)" for the next two, even though CasparCG calls
+// omt_send_create for each of them sequentially on a single thread at startup (so it isn't a
+// CasparCG-side race). Holding this lock across each create/destroy call, with a short pause
+// between them, doesn't fix the root cause - which is inside the closed-source libomt runtime -
+// but gives it a moment to settle in case that's timing-sensitive; it also protects against a
+// genuine CasparCG-side race for calls made after startup (e.g. one channel reinitializing its
+// consumers on a video-format change while another handles an AMCP ADD/REMOVE concurrently).
+std::unique_lock<std::mutex> serialize_create_call();
 
 // Returns the list of OMT sources (Address Name) currently visible via discovery.
 std::vector<std::string> get_current_sources();

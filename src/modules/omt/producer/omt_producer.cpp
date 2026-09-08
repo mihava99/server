@@ -129,10 +129,13 @@ struct omt_producer : public core::frame_producer
     {
         set_thread_name(L"OMT-RECV: " + name_);
 
-        recv_ = lib_->receive_create(name_utf8_.c_str(),
-                                     static_cast<OMTFrameType>(OMTFrameType_Video | OMTFrameType_Audio),
-                                     OMTPreferredVideoFormat_BGRA,
-                                     OMTReceiveFlags_None);
+        {
+            auto lock = omt::serialize_create_call();
+            recv_     = lib_->receive_create(name_utf8_.c_str(),
+                                          static_cast<OMTFrameType>(OMTFrameType_Video | OMTFrameType_Audio),
+                                          OMTPreferredVideoFormat_BGRA,
+                                          OMTReceiveFlags_None);
+        }
 
         if (!recv_) {
             CASPAR_LOG(error) << print() << L" Failed to create OMT receiver.";
@@ -153,7 +156,10 @@ struct omt_producer : public core::frame_producer
             }
         }
 
-        lib_->receive_destroy(recv_);
+        {
+            auto lock = omt::serialize_create_call();
+            lib_->receive_destroy(recv_);
+        }
         recv_ = nullptr;
     }
 

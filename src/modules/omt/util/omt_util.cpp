@@ -23,8 +23,10 @@
 
 #include <boost/filesystem.hpp>
 
+#include <chrono>
 #include <memory>
 #include <sstream>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -122,6 +124,22 @@ omt_lib* load_library()
     }();
 
     return lib;
+}
+
+std::unique_lock<std::mutex> serialize_create_call()
+{
+    static std::mutex                    mutex;
+    static std::chrono::steady_clock::time_point last_call;
+
+    std::unique_lock<std::mutex> lock(mutex);
+
+    constexpr auto min_gap = std::chrono::milliseconds(300);
+    auto           now     = std::chrono::steady_clock::now();
+    if (last_call != std::chrono::steady_clock::time_point{} && now - last_call < min_gap)
+        std::this_thread::sleep_for(min_gap - (now - last_call));
+    last_call = std::chrono::steady_clock::now();
+
+    return lock;
 }
 
 std::vector<std::string> get_current_sources()

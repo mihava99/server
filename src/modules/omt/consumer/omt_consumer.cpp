@@ -255,8 +255,10 @@ struct omt_consumer : public core::frame_consumer
         if (send_thread_.joinable())
             send_thread_.join();
 
-        if (send_)
+        if (send_) {
+            auto lock = omt::serialize_create_call();
             lib_->send_destroy(send_);
+        }
     }
 
     std::wstring default_omt_name() const
@@ -273,7 +275,10 @@ struct omt_consumer : public core::frame_consumer
         format_desc_   = format_desc;
         channel_index_ = channel_info.index;
 
-        send_ = lib_->send_create(name_utf8_.c_str(), quality_);
+        {
+            auto lock = omt::serialize_create_call();
+            send_     = lib_->send_create(name_utf8_.c_str(), quality_);
+        }
 
         AVChannelLayout layout;
         av_channel_layout_default(&layout, format_desc_.audio_channels);
