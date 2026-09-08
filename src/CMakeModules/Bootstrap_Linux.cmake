@@ -125,6 +125,66 @@ if (ENABLE_HTML)
     endif()
 endif ()
 
+# OMT (Open Media Transport) - optional, source build for the omt module's libomt.so/libvmx.so.
+# Unlike Windows (which fetches an official prebuilt binary release), upstream publishes no
+# prebuilt Linux binary at all, so this builds both from source instead - opt-in and OFF by
+# default, since it pulls in a real new toolchain requirement (the .NET 8 SDK) beyond what
+# CasparCG's own C++/CMake build otherwise needs, and neither repo publishes version-tagged
+# releases to pin to (this tracks each repo's master branch as of build time). The omt module
+# itself needs none of this: libomt is always loaded dynamically at runtime (see
+# src/modules/omt/util/omt_util.cpp), so a normal build without OMT_BUILD_FROM_SOURCE is
+# unaffected, and the module still works on a machine where libomt.so was installed by other means
+# (e.g. a distro package, or building it by hand from the same repos below).
+option(OMT_BUILD_FROM_SOURCE "Build the Open Media Transport runtime (libomt, libvmx) from source and bundle it. Requires the .NET 8 SDK ('dotnet') and clang, in addition to CasparCG's normal build tools." OFF)
+
+if (OMT_BUILD_FROM_SOURCE)
+    find_program(OMT_DOTNET_EXECUTABLE dotnet)
+    if (NOT OMT_DOTNET_EXECUTABLE)
+        message(FATAL_ERROR "OMT_BUILD_FROM_SOURCE requires the .NET 8 SDK ('dotnet' not found in PATH) - "
+                             "install it from https://dotnet.microsoft.com/download/dotnet/8.0, or configure "
+                             "with -DOMT_BUILD_FROM_SOURCE=OFF.")
+    endif()
+
+    # libvmx: the VMX video codec libomt depends on. Its own Linux build (build/buildlinuxx64.sh,
+    # run from inside build/ per the repo's README) is a single clang++ invocation with a known,
+    # fixed output path, so it's built directly here rather than through a wrapper script.
+    casparcg_add_external_project(libvmx-src)
+    ExternalProject_Add(libvmx-src
+        GIT_REPOSITORY https://github.com/openmediatransport/libvmx.git
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+        DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
+        CONFIGURE_COMMAND ""
+        BUILD_IN_SOURCE TRUE
+        BUILD_COMMAND sh -c "cd build && bash buildlinuxx64.sh"
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS "<SOURCE_DIR>/build/libvmx.so"
+    )
+    ExternalProject_Get_Property(libvmx-src SOURCE_DIR)
+    set(OMT_LIBVMX_SO "${SOURCE_DIR}/build/libvmx.so")
+
+    # libomt: see omt_build_libomt_linux.sh for why this needs a wrapper rather than a direct
+    # BUILD_COMMAND - dotnet publish's exact output path isn't fixed the way libvmx's is.
+    casparcg_add_external_project(libomt-src)
+    ExternalProject_Add(libomt-src
+        GIT_REPOSITORY https://github.com/openmediatransport/libomt.git
+        GIT_TAG master
+        GIT_SHALLOW TRUE
+        DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
+        CONFIGURE_COMMAND ""
+        BUILD_IN_SOURCE TRUE
+        BUILD_COMMAND bash ${CMAKE_CURRENT_LIST_DIR}/omt_build_libomt_linux.sh
+        INSTALL_COMMAND ""
+        DEPENDS libvmx-src
+        BUILD_BYPRODUCTS "<SOURCE_DIR>/libomt.so"
+    )
+    ExternalProject_Get_Property(libomt-src SOURCE_DIR)
+    set(OMT_LIBOMT_SO "${SOURCE_DIR}/libomt.so")
+
+    install(FILES "${OMT_LIBVMX_SO}" TYPE LIB)
+    install(FILES "${OMT_LIBOMT_SO}" TYPE LIB)
+endif()
+
 SET (BOOST_INCLUDE_PATH "${Boost_INCLUDE_DIRS}")
 SET (FFMPEG_INCLUDE_PATH "${FFMPEG_INCLUDE_DIRS}")
 
