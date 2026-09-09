@@ -213,8 +213,32 @@ if (OMT_BUILD_FROM_SOURCE)
     )
     set(OMT_LIBOMT_SO "${OMT_NET_SRC_ROOT}/libomt/libomt.so")
 
-    install(FILES "${OMT_LIBVMX_SO}" TYPE LIB)
-    install(FILES "${OMT_LIBOMT_SO}" TYPE LIB)
+    # Destination for the OMT runtime libraries. Not simply install(... TYPE LIB) (as the CEF
+    # bundling above uses): this project never include()s GNUInstallDirs, and on at least one real
+    # system a find_package()'d dependency's CMake config script sets CMAKE_INSTALL_LIBDIR to a
+    # plain, non-multilib-aware "lib" as a side effect, which a later include(GNUInstallDirs) can't
+    # override (it only sets the variable if not already defined). This matters functionally, not
+    # just for packaging correctness: libomt.so/libvmx.so are dlopen()'d by soname at runtime (see
+    # src/modules/omt/util/omt_util.cpp), and on a 64-bit RHEL/Fedora-family system ldconfig only
+    # caches /usr/lib64 for 64-bit libraries, not /usr/lib - so getting this wrong silently produces
+    # a package that installs but can't find its own OMT runtime.
+    #
+    # So this is resolved independently of that ambient variable: -DOMT_INSTALL_LIBDIR=... always
+    # wins for anyone who needs something else (e.g. Debian's multiarch lib/<triplet> layout);
+    # otherwise it replicates GNUInstallDirs' own real default (lib64 on 64-bit Linux, except
+    # Debian/Ubuntu, which use plain lib - detected via the standard /etc/debian_version marker).
+    set(OMT_INSTALL_LIBDIR "" CACHE STRING "Install directory for the OMT runtime libraries (libomt.so, libvmx.so), relative to the install prefix. Empty = auto-detect.")
+    if (NOT OMT_INSTALL_LIBDIR)
+        if (CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT EXISTS "/etc/debian_version")
+            set(OMT_INSTALL_LIBDIR "lib64")
+        elseif (CMAKE_INSTALL_LIBDIR)
+            set(OMT_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+        else()
+            set(OMT_INSTALL_LIBDIR "lib")
+        endif()
+    endif()
+    install(FILES "${OMT_LIBVMX_SO}" DESTINATION "${OMT_INSTALL_LIBDIR}")
+    install(FILES "${OMT_LIBOMT_SO}" DESTINATION "${OMT_INSTALL_LIBDIR}")
 endif()
 
 SET (BOOST_INCLUDE_PATH "${Boost_INCLUDE_DIRS}")
