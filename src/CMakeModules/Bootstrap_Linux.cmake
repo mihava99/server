@@ -146,26 +146,29 @@ if (OMT_BUILD_FROM_SOURCE)
                              "with -DOMT_BUILD_FROM_SOURCE=OFF.")
     endif()
 
-    # libvmx: the VMX video codec libomt depends on. Its own Linux build (build/buildlinuxx64.sh,
-    # run from inside build/ per the repo's README) is a single clang++ invocation with a known,
-    # fixed output path, so it's built directly here rather than through a wrapper script.
+    # libvmx: the VMX video codec libomt depends on. Its own Linux builds (build/buildlinuxx64.sh,
+    # build/buildlinuxarm64.sh - genuinely different source files per architecture, not just
+    # different flags) are each a single clang++ invocation with a known, fixed output path
+    # (build/libvmx.so either way); see omt_build_libvmx_linux.sh for the x86_64-vs-aarch64 pick.
     #
-    # PATCH_COMMAND: that clang++ invocation brace-initializes an unsigned char[] with negative
-    # int literals (e.g. {112,-86,-26,0,...}), which Clang - unlike GCC/MSVC - treats as a hard
-    # -Wc++11-narrowing error rather than a warning, failing the build outright even with no
-    # -Werror involved. -Wno-c++11-narrowing is the standard fix for this exact class of
-    # "MSVC-style code ported to Clang" issue. Patching our own invocation rather than upstream's
-    # file, since we don't maintain that repo.
+    # PATCH_COMMAND: both of those clang++ invocations brace-initialize an unsigned char[] with
+    # negative int literals (e.g. {112,-86,-26,0,...}) in a header shared by both architectures,
+    # which Clang - unlike GCC/MSVC - treats as a hard -Wc++11-narrowing error rather than a
+    # warning, failing the build outright even with no -Werror involved. -Wno-c++11-narrowing is
+    # the standard fix for this exact class of "MSVC-style code ported to Clang" issue. Patching
+    # our own invocations rather than upstream's files, since we don't maintain that repo; both
+    # scripts are patched unconditionally since which one actually runs is only decided at build
+    # time (inside the wrapper script), based on the build machine's own architecture.
     casparcg_add_external_project(libvmx-src)
     ExternalProject_Add(libvmx-src
         GIT_REPOSITORY https://github.com/openmediatransport/libvmx.git
         GIT_TAG master
         GIT_SHALLOW TRUE
         DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
-        PATCH_COMMAND sed -i "s/-mbmi -shared/-mbmi -Wno-c++11-narrowing -shared/" <SOURCE_DIR>/build/buildlinuxx64.sh
+        PATCH_COMMAND sh -c "sed -i 's/ -shared/ -Wno-c++11-narrowing -shared/' <SOURCE_DIR>/build/buildlinuxx64.sh <SOURCE_DIR>/build/buildlinuxarm64.sh"
         CONFIGURE_COMMAND ""
         BUILD_IN_SOURCE TRUE
-        BUILD_COMMAND sh -c "cd build && bash buildlinuxx64.sh"
+        BUILD_COMMAND bash ${CMAKE_CURRENT_LIST_DIR}/omt_build_libvmx_linux.sh
         INSTALL_COMMAND ""
         BUILD_BYPRODUCTS "<SOURCE_DIR>/build/libvmx.so"
     )
