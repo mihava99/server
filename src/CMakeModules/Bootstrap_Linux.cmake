@@ -125,14 +125,15 @@ if (ENABLE_HTML)
     endif()
 endif ()
 
-# OMT (Open Media Transport) - optional, source build for the omt module's libomt.so/libvmx.so.
-# Unlike Windows (which fetches an official prebuilt binary release), upstream publishes no
-# prebuilt Linux binary at all, so this builds both from source instead - opt-in and OFF by
-# default, since it pulls in a real new toolchain requirement (the .NET 8 SDK) beyond what
-# CasparCG's own C++/CMake build otherwise needs, and neither repo publishes version-tagged
-# releases to pin to (this tracks each repo's master branch as of build time). The omt module
-# itself needs none of this: libomt is always loaded dynamically at runtime (see
-# src/modules/omt/util/omt_util.cpp), so a normal build without OMT_BUILD_FROM_SOURCE is
+# OMT (Open Media Transport) - source build for the omt module's libomt.so/libvmx.so. Unlike
+# Windows (which fetches an official prebuilt binary release), upstream publishes no prebuilt
+# Linux binary at all, so this builds both from source instead.
+#
+# Opt-in and OFF by default: this is a real additional toolchain requirement (the .NET 8 SDK, on
+# top of clang) beyond what CasparCG's own C++/CMake build otherwise needs. Neither upstream repo
+# publishes version-tagged releases to pin to (this tracks each repo's master branch as of build
+# time). The omt module itself needs none of this: libomt is always loaded dynamically at runtime
+# (see src/modules/omt/util/omt_util.cpp), so a normal build without OMT_BUILD_FROM_SOURCE is
 # unaffected, and the module still works on a machine where libomt.so was installed by other means
 # (e.g. a distro package, or building it by hand from the same repos below).
 option(OMT_BUILD_FROM_SOURCE "Build the Open Media Transport runtime (libomt, libvmx) from source and bundle it. Requires the .NET 8 SDK ('dotnet') and clang, in addition to CasparCG's normal build tools." OFF)
@@ -151,10 +152,10 @@ if (OMT_BUILD_FROM_SOURCE)
     #
     # PATCH_COMMAND: that clang++ invocation brace-initializes an unsigned char[] with negative
     # int literals (e.g. {112,-86,-26,0,...}), which Clang - unlike GCC/MSVC - treats as a hard
-    # -Wc++11-narrowing *error* rather than a warning, failing the build outright even with no
-    # -Werror involved (confirmed against a real build on Fedora 44). -Wno-c++11-narrowing is the
-    # standard fix for this exact class of "MSVC-style code ported to Clang" issue. Patching our
-    # own invocation rather than upstream's file, since we don't maintain that repo.
+    # -Wc++11-narrowing error rather than a warning, failing the build outright even with no
+    # -Werror involved. -Wno-c++11-narrowing is the standard fix for this exact class of
+    # "MSVC-style code ported to Clang" issue. Patching our own invocation rather than upstream's
+    # file, since we don't maintain that repo.
     casparcg_add_external_project(libvmx-src)
     ExternalProject_Add(libvmx-src
         GIT_REPOSITORY https://github.com/openmediatransport/libvmx.git
@@ -174,11 +175,10 @@ if (OMT_BUILD_FROM_SOURCE)
     # libomtnet: libomt.csproj references this via a plain <Reference HintPath="..\libomtnet\bin\
     # Release\netstandard2.0\libomtnet.dll">, i.e. a prebuilt DLL expected at a fixed path *relative
     # to libomt's own checkout* - not a project reference, so it isn't fetched/built automatically
-    # as part of libomt's own build (confirmed by a real build failure: CS0246 on every OMT* type,
-    # all of which actually live in libomtnet). Both checkouts' SOURCE_DIR are pinned explicitly
-    # below (rather than left at ExternalProject's per-target default, which would put them under
-    # unrelated *-prefix trees) so they land as real filesystem siblings and that relative
-    # HintPath resolves correctly.
+    # as part of libomt's own build. Both checkouts' SOURCE_DIR are pinned explicitly below (rather
+    # than left at ExternalProject's per-target default, which would put them under unrelated
+    # *-prefix trees) so they land as real filesystem siblings and that relative HintPath resolves
+    # correctly.
     set(OMT_NET_SRC_ROOT "${CMAKE_CURRENT_BINARY_DIR}/omt-src")
 
     casparcg_add_external_project(libomtnet)

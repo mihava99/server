@@ -103,7 +103,7 @@ void* open_library()
     if (!handle)
         not_installed();
 
-    CASPAR_LOG(info) << u16(LIBRARY_FILENAME);
+    CASPAR_LOG(info) << L"Loaded " << u16(LIBRARY_FILENAME);
     static std::shared_ptr<void> keep_alive(handle, dlclose);
     return handle;
 #endif

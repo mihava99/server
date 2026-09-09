@@ -234,7 +234,6 @@ struct omt_consumer : public core::frame_consumer
     spl::shared_ptr<diagnostics::graph> graph_;
     caspar::timer                       tick_timer_;
     caspar::timer                       frame_timer_;
-    caspar::timer                       diagnostics_timer_;
 
   public:
     omt_consumer(std::wstring name, OMTQuality quality, alpha_mode alpha, pixel_format format)
@@ -274,10 +273,8 @@ struct omt_consumer : public core::frame_consumer
         return L"CasparCG" + (instance_no_ ? L" " + std::to_wstring(instance_no_) : L"");
     }
 
-    // Diagnostic aid for tracking down libomt bugs affecting the 2nd+ sender created within the
-    // same process (see serialize_create_call's comment) - logs exactly what libomt itself
-    // reports as this sender's discovery address, so it can be compared against what receivers
-    // actually see (or don't see) in their source lists.
+    // Logs exactly what libomt reports as this sender's discovery address, i.e. the name a
+    // receiver will see it listed under.
     void log_discovery_address()
     {
         if (!send_)
@@ -367,14 +364,6 @@ struct omt_consumer : public core::frame_consumer
             send_video(frame);
             send_audio(frame);
             graph_->set_value("frame-time", frame_timer_.elapsed() * format_desc_.fps * 0.5);
-
-            // Periodically log the live connection count as a diagnostic aid - if a receiver
-            // never shows up here even when connecting directly (bypassing discovery), the fault
-            // is in the sender/transport itself rather than just discovery/announcement.
-            if (diagnostics_timer_.elapsed() >= 5.0) {
-                CASPAR_LOG(info) << print() << L" OMT connections: " << lib_->send_connections(send_);
-                diagnostics_timer_.restart();
-            }
         }
     }
 

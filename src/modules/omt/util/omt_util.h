@@ -54,10 +54,10 @@ omt_lib* load_library();
 //
 // Some versions of libomt appear to have an internal bug where the discovery name (hostname +
 // given name) of every sender created after the first one *within the same process* loses its
-// case - e.g. three CasparCG channels on host "M-SV1" showed "M-SV1 (CASPAR VIDEO)" for the first
-// one, then "m-sv1 (cg1)" and "m-sv1 (cg2)" for the next two, even though CasparCG calls
-// omt_send_create for each of them sequentially on a single thread at startup (so it isn't a
-// CasparCG-side race). Holding this lock across each create/destroy call, with a short pause
+// case - e.g. three CasparCG channels on host "HOST1" showed "HOST1 (CHANNEL A)" for the first
+// one, then "host1 (channel b)" and "host1 (channel c)" for the next two, even though CasparCG
+// calls omt_send_create for each of them sequentially on a single thread at startup (so it isn't
+// a CasparCG-side race). Holding this lock across each create/destroy call, with a short pause
 // between them, doesn't fix the root cause - which is inside the closed-source libomt runtime -
 // but gives it a moment to settle in case that's timing-sensitive; it also protects against a
 // genuine CasparCG-side race for calls made after startup (e.g. one channel reinitializing its
@@ -65,15 +65,16 @@ omt_lib* load_library();
 std::unique_lock<std::mutex> serialize_create_call();
 
 // Returns an ASCII-safe transliteration of `name` for use as an OMT sender name: diacritics are
-// stripped (e.g. "GRAFICĂ" -> "GRAFICA"), and anything still non-ASCII afterwards (scripts with no
+// stripped (e.g. "CAMERĂ" -> "CAMERA"), and anything still non-ASCII afterwards (scripts with no
 // Latin base letter to fall back to) is replaced with '_'. Returns `name` unchanged if it's already
 // pure ASCII.
 //
-// Confirmed libomt bug: a sender name containing non-ASCII characters (e.g. Romanian/Central-
-// European diacritics) breaks that sender's discovery entirely - not just its display casing -
-// once more than one sender exists within the same process. Only affects sending; a producer's
-// connection target name must be left exactly as given, since it has to match whatever the remote
-// sender actually announces (which may itself be mangled by the same bug).
+// Confirmed libomt bug: a sender name containing non-ASCII characters (e.g. accented Latin
+// characters, as used by many European languages) breaks that sender's discovery entirely - not
+// just its display casing - once more than one sender exists within the same process. Only
+// affects sending; a producer's connection target name must be left exactly as given, since it
+// has to match whatever the remote sender actually announces (which may itself be mangled by the
+// same bug).
 std::wstring make_ascii_safe_name(const std::wstring& name);
 
 // Returns the list of OMT sources (Address Name) currently visible via discovery.
