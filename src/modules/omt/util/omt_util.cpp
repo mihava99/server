@@ -170,14 +170,12 @@ std::wstring make_ascii_safe_name(const std::wstring& name)
     std::wstring result = name;
 
     try {
-        // A locale of our own, independent of whatever categories the process' global locale
-        // was set up with (main.cpp only installs the "codepage" category) - normalize() needs
-        // the "convert" category, which the generator's default set includes.
+        // Own locale with the "convert" category normalize() needs (the process' global
+        // locale only has "codepage").
         static const boost::locale::generator gen;
         static const std::locale              loc = gen("en_US.UTF-8");
 
-        // Decompose e.g. U+0102 (Latin Capital Letter A with Breve, "Ă") into 'A' followed by a
-        // combining breve, then drop the combining mark below to leave the plain base letter.
+        // Decompose accented letters into base letter + combining mark, then drop the mark.
         std::wstring decomposed = boost::locale::normalize(name, boost::locale::norm_nfd, loc);
 
         result.clear();
@@ -188,9 +186,7 @@ std::wstring make_ascii_safe_name(const std::wstring& name)
             result.push_back(c);
         }
     } catch (...) {
-        // Normalization unavailable for some reason - fall through to the replacement loop below,
-        // which still guarantees an ASCII-safe (if less faithful) result.
-        result = name;
+        result = name; // Fall through to the replacement loop below.
     }
 
     for (wchar_t& c : result) {

@@ -125,17 +125,12 @@ if (ENABLE_HTML)
     endif()
 endif ()
 
-# OMT (Open Media Transport) - source build for the omt module's libomt.so/libvmx.so. Unlike
-# Windows (which fetches an official prebuilt binary release), upstream publishes no prebuilt
-# Linux binary at all, so this builds both from source instead.
+# OMT (Open Media Transport) - source build for the omt module's libomt.so/libvmx.so.
+# Upstream publishes no prebuilt Linux binary, so this builds both from source instead.
 #
-# Opt-in and OFF by default: this is a real additional toolchain requirement (the .NET 8 SDK, on
-# top of clang) beyond what CasparCG's own C++/CMake build otherwise needs. Neither upstream repo
-# publishes version-tagged releases to pin to (this tracks each repo's master branch as of build
-# time). The omt module itself needs none of this: libomt is always loaded dynamically at runtime
-# (see src/modules/omt/util/omt_util.cpp), so a normal build without OMT_BUILD_FROM_SOURCE is
-# unaffected, and the module still works on a machine where libomt.so was installed by other means
-# (e.g. a distro package, or building it by hand from the same repos below).
+# Opt-in and OFF by default: requires the .NET 8 SDK and clang, beyond what CasparCG's
+# own build otherwise needs. The omt module still works without this if libomt.so is
+# installed some other way.
 option(OMT_BUILD_FROM_SOURCE "Build the Open Media Transport runtime (libomt, libvmx) from source and bundle it. Requires the .NET 8 SDK ('dotnet') and clang, in addition to CasparCG's normal build tools." OFF)
 
 if (OMT_BUILD_FROM_SOURCE)
@@ -146,19 +141,12 @@ if (OMT_BUILD_FROM_SOURCE)
                              "with -DOMT_BUILD_FROM_SOURCE=OFF.")
     endif()
 
-    # libvmx: the VMX video codec libomt depends on. Its own Linux builds (build/buildlinuxx64.sh,
-    # build/buildlinuxarm64.sh - genuinely different source files per architecture, not just
-    # different flags) are each a single clang++ invocation with a known, fixed output path
-    # (build/libvmx.so either way); see omt_build_libvmx_linux.sh for the x86_64-vs-aarch64 pick.
+    # libvmx: the video codec libomt depends on. See omt_build_libvmx_linux.sh for how it
+    # picks the right build script for the host architecture (x86_64 or aarch64).
     #
-    # PATCH_COMMAND: both of those clang++ invocations brace-initialize an unsigned char[] with
-    # negative int literals (e.g. {112,-86,-26,0,...}) in a header shared by both architectures,
-    # which Clang - unlike GCC/MSVC - treats as a hard -Wc++11-narrowing error rather than a
-    # warning, failing the build outright even with no -Werror involved. -Wno-c++11-narrowing is
-    # the standard fix for this exact class of "MSVC-style code ported to Clang" issue. Patching
-    # our own invocations rather than upstream's files, since we don't maintain that repo; both
-    # scripts are patched unconditionally since which one actually runs is only decided at build
-    # time (inside the wrapper script), based on the build machine's own architecture.
+    # PATCH_COMMAND works around a Clang narrowing warning that upstream's code triggers
+    # as a hard error (GCC/MSVC only warn). Patches both build scripts, since the wrapper
+    # decides at build time which one actually runs.
     casparcg_add_external_project(libvmx-src)
     ExternalProject_Add(libvmx-src
         GIT_REPOSITORY https://github.com/openmediatransport/libvmx.git
@@ -175,13 +163,9 @@ if (OMT_BUILD_FROM_SOURCE)
     ExternalProject_Get_Property(libvmx-src SOURCE_DIR)
     set(OMT_LIBVMX_SO "${SOURCE_DIR}/build/libvmx.so")
 
-    # libomtnet: libomt.csproj references this via a plain <Reference HintPath="..\libomtnet\bin\
-    # Release\netstandard2.0\libomtnet.dll">, i.e. a prebuilt DLL expected at a fixed path *relative
-    # to libomt's own checkout* - not a project reference, so it isn't fetched/built automatically
-    # as part of libomt's own build. Both checkouts' SOURCE_DIR are pinned explicitly below (rather
-    # than left at ExternalProject's per-target default, which would put them under unrelated
-    # *-prefix trees) so they land as real filesystem siblings and that relative HintPath resolves
-    # correctly.
+    # libomtnet: libomt.csproj expects a prebuilt libomtnet.dll next to it, at
+    # ../libomtnet/bin/Release/netstandard2.0/libomtnet.dll. Both are checked out under
+    # the same parent directory so that path resolves correctly.
     set(OMT_NET_SRC_ROOT "${CMAKE_CURRENT_BINARY_DIR}/omt-src")
 
     casparcg_add_external_project(libomtnet)
@@ -216,20 +200,9 @@ if (OMT_BUILD_FROM_SOURCE)
     )
     set(OMT_LIBOMT_SO "${OMT_NET_SRC_ROOT}/libomt/libomt.so")
 
-    # Destination for the OMT runtime libraries. Not simply install(... TYPE LIB) (as the CEF
-    # bundling above uses): this project never include()s GNUInstallDirs, and on at least one real
-    # system a find_package()'d dependency's CMake config script sets CMAKE_INSTALL_LIBDIR to a
-    # plain, non-multilib-aware "lib" as a side effect, which a later include(GNUInstallDirs) can't
-    # override (it only sets the variable if not already defined). This matters functionally, not
-    # just for packaging correctness: libomt.so/libvmx.so are dlopen()'d by soname at runtime (see
-    # src/modules/omt/util/omt_util.cpp), and on a 64-bit RHEL/Fedora-family system ldconfig only
-    # caches /usr/lib64 for 64-bit libraries, not /usr/lib - so getting this wrong silently produces
-    # a package that installs but can't find its own OMT runtime.
-    #
-    # So this is resolved independently of that ambient variable: -DOMT_INSTALL_LIBDIR=... always
-    # wins for anyone who needs something else (e.g. Debian's multiarch lib/<triplet> layout);
-    # otherwise it replicates GNUInstallDirs' own real default (lib64 on 64-bit Linux, except
-    # Debian/Ubuntu, which use plain lib - detected via the standard /etc/debian_version marker).
+    # Install to the right lib directory: lib64 on most 64-bit Linux, plain lib on
+    # Debian/Ubuntu. Needed for dlopen() to find these at runtime, not just for
+    # packaging. -DOMT_INSTALL_LIBDIR overrides this.
     set(OMT_INSTALL_LIBDIR "" CACHE STRING "Install directory for the OMT runtime libraries (libomt.so, libvmx.so), relative to the install prefix. Empty = auto-detect.")
     if (NOT OMT_INSTALL_LIBDIR)
         if (CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT EXISTS "/etc/debian_version")

@@ -70,11 +70,8 @@ OMTQuality parse_quality(const std::wstring& value)
     return OMTQuality_Default;
 }
 
-// CasparCG composites internally with straight-multiplied (i.e. premultiplied) alpha - see e.g.
-// the bluefish consumer's keyer setup. Some receivers (e.g. OBS's OMT support, as of this writing)
-// mishandle alpha entirely - ignoring OMTVideoFlags_PreMultiplied, and sometimes still getting
-// straight alpha wrong too - so besides converting to straight, sending no alpha channel at all
-// is offered as a compatibility escape hatch for those.
+// CasparCG composites internally with premultiplied alpha. Some receivers mishandle
+// alpha entirely, so "straight" and "none" are offered as compatibility fallbacks.
 enum class alpha_mode
 {
     premultiplied,
@@ -103,13 +100,9 @@ const wchar_t* alpha_mode_name(alpha_mode mode)
     }
 }
 
-// Which uncompressed pixel format to hand to omt_send (OMT/libvmx then does its own compression
-// for the wire - there is no public API to choose or bypass that, only to pick what feeds it).
-// BGRA is simplest (direct passthrough of CasparCG's own buffer) but some receivers' BGRA-with-
-// alpha decode path is buggy (e.g. as of this writing OBS's OMT source can fail to display
-// anything at all once an alpha channel is present). The YUV variants go through libswscale and
-// are offered as a compatibility escape hatch - UYVA in particular is the alpha-carrying
-// alternative to try when BGRA+alpha doesn't work.
+// Uncompressed pixel format to hand to omt_send. BGRA is a direct passthrough of
+// CasparCG's own buffer; the others go through libswscale as compatibility fallbacks
+// for receivers with a broken BGRA-with-alpha decode path.
 enum class pixel_format
 {
     bgra,
