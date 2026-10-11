@@ -152,6 +152,14 @@ find %{buildroot}%{private_libdir} -type f \( -name '*.so' -o -name '*.so.*' \) 
 # CasparCG runs CEF without its sandbox, and a copy that is not setuid root does nothing.
 rm -f %{buildroot}%{private_libdir}/chrome-sandbox
 
+%if %{with omt}
+# The MIT license of libvmx, libomtnet and libomt asks for its notice to come with the libraries.
+for library in libvmx libomtnet libomt; do
+    install -Dpm 0644 %{_vpath_builddir}/omt-src/$library/LICENSE.txt \
+        %{buildroot}%{_licensedir}/%{name}/$library.txt
+done
+%endif
+
 %check
 # The server finds the bundled libraries through its rpath, so they have to be where it points to.
 readelf -d %{buildroot}%{_bindir}/%{name} | grep -F '%{private_libdir}'
@@ -165,6 +173,11 @@ test -f %{buildroot}%{private_libdir}/libvmx.so
 
 %files
 %license LICENSE
+%if %{with omt}
+%license %{_licensedir}/%{name}/libvmx.txt
+%license %{_licensedir}/%{name}/libomtnet.txt
+%license %{_licensedir}/%{name}/libomt.txt
+%endif
 %doc README.md CHANGELOG.md
 %{_bindir}/%{name}
 %{_datadir}/%{name}/
