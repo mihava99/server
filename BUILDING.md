@@ -18,6 +18,8 @@ During the build, you can specify the CMake option `CASPARCG_DOWNLOAD_MIRROR` to
 If you want to be able to build CasparCG offline, you may need to manually seed this cache. You can do so by placing the correct tar.gz or zip into a folder and using `CASPARCG_DOWNLOAD_CACHE` to tell CMake where to find it.
 You can figure out which files you need by looking at each of the `ExternalProject_Add` function calls inside of [Bootstrap_Linux.cmake](./src/CMakeModules/Bootstrap_Linux.cmake) or [Bootstrap_Windows.cmake](./src/CMakeModules/Bootstrap_Windows.cmake). Some of the ones listed are optional, depending on other CMake flags.
 
+The exception is CEF, which is downloaded from CEF's own build CDN (https://cef-builds.spotifycdn.com/index.html) instead. Its version and checksums are set in [CEF.cmake](./src/CMakeModules/CEF.cmake). Use the CMake option `CEF_DOWNLOAD_BASE_URL` to download it from a mirror that has the same file names.
+
 # Open Media Transport (OMT)
 
 The OMT runtime (libvmx, libomtnet and libomt) is cloned from https://github.com/openmediatransport at the revisions pinned in [OMT.cmake](./src/CMakeModules/OMT.cmake), and compiled as part of the CasparCG build. This works the same way on Windows and Linux, and the result is bundled next to the server. The sources are cloned into `omt-src` inside the build directory. The first build needs network access: `git` clones the sources from GitHub, and `dotnet` restores its NuGet packages from nuget.org, among them the Native AOT compiler and the reference assemblies. `CASPARCG_DOWNLOAD_MIRROR` and `CASPARCG_DOWNLOAD_CACHE` do not apply to it.
@@ -111,6 +113,8 @@ If all goes to plan, a folder called 'staging' has been created with everything 
 -DUSE_STATIC_BOOST=ON - (Linux only, default OFF) statically link against Boost.
 
 -DUSE_SYSTEM_CEF=OFF - (Linux only, default ON) use the version of CEF from your OS. This expects to be using builds from https://launchpad.net/~casparcg/+archive/ubuntu/ppa
+
+-DCEF_DOWNLOAD_BASE_URL - Where to download the bundled CEF from, see Dependency caching above.
 
 -DOMT_BUILD_FROM_SOURCE=OFF - (default ON) do not build the OMT runtime, see the Open Media Transport section above.
 
