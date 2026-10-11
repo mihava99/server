@@ -159,7 +159,7 @@ if (MSVC)
     casparcg_add_runtime_dependency("${OMT_LIBOMT_LIBRARY}")
     casparcg_add_runtime_dependency("${OMT_LIBVMX_LIBRARY}")
 else ()
-    install(FILES "${OMT_LIBOMT_LIBRARY}" "${OMT_LIBVMX_LIBRARY}" TYPE LIB)
+    install(FILES "${OMT_LIBOMT_LIBRARY}" "${OMT_LIBVMX_LIBRARY}" DESTINATION "${CASPARCG_INSTALL_LIBDIR}")
 
     if ("${CASPARCG_BINARY_NAME}" STREQUAL "casparcg")
         install(FILES "${OMT_LIBVMX_DIR}/LICENSE.txt" DESTINATION licenses RENAME libvmx.txt)
