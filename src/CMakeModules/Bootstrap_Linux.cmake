@@ -17,6 +17,7 @@ set(USE_SYSTEM_CEF ON CACHE BOOL "Use the version of cef from your OS (only test
 set(CASPARCG_BINARY_NAME "casparcg" CACHE STRING "Custom name of the binary to build (this disables some install files)")
 set(ENABLE_AVX2 OFF CACHE BOOL "Enable the AVX2 instruction set (requires a CPU that supports it)")
 set(ENABLE_VULKAN OFF CACHE BOOL "Enable Vulkan support")
+set(ENABLE_WERROR ON CACHE BOOL "Treat compiler warnings as errors (turn off when packaging with a newer compiler or extra warning flags)")
 
 # Determine build (target) platform
 SET (PLATFORM_FOLDER_NAME "linux")
@@ -185,7 +186,10 @@ ENDIF ()
 
 ADD_COMPILE_OPTIONS (-fnon-call-exceptions) # Allow signal handler to throw exception
 
-ADD_COMPILE_OPTIONS (-Wno-deprecated-declarations -Wno-write-strings -Wno-multichar -Wno-cpp -Werror)
+ADD_COMPILE_OPTIONS (-Wno-deprecated-declarations -Wno-write-strings -Wno-multichar -Wno-cpp)
+IF (ENABLE_WERROR)
+    ADD_COMPILE_OPTIONS (-Werror)
+ENDIF ()
 
 IF (ENABLE_VULKAN)
     ADD_COMPILE_OPTIONS (-Wno-nonnull -Wno-nullability-completeness)
