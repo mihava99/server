@@ -235,10 +235,11 @@ casparcg_add_runtime_dependency("${LIBERATION_FONTS_BIN_PATH}/LiberationMono-Reg
 
 # CEF
 if (ENABLE_HTML)
+	include(CEF)
 	casparcg_add_external_project(cef)
 	ExternalProject_Add(cef
-		URL ${CASPARCG_DOWNLOAD_MIRROR}/cef/cef_binary_142.0.17+g60aac24+chromium-142.0.7444.176_windows64_minimal.tar.bz2
-		URL_HASH SHA256=16c072a44484fe521037c74d03a339a77573b1fc0146cf44cc71e79fd0cc0198
+		URL ${CEF_WINDOWS64_URL}
+		URL_HASH SHA256=${CEF_WINDOWS64_SHA256}
 		DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
 		CMAKE_ARGS -DUSE_SANDBOX=Off -DCEF_RUNTIME_LIBRARY_FLAG=/MD ${EXTERNAL_CMAKE_ARGS}
 		INSTALL_COMMAND ""
@@ -279,8 +280,6 @@ if (ENABLE_HTML)
 	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/d3dcompiler_47.dll")
 	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/dxcompiler.dll")
 	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/dxil.dll")
-	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/libEGL.dll")
-	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/libGLESv2.dll")
 	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/vk_swiftshader.dll")
 	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/vk_swiftshader_icd.json")
 	casparcg_add_runtime_dependency("${CEF_BIN_PATH}/vulkan-1.dll")

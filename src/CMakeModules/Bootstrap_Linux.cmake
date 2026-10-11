@@ -65,6 +65,8 @@ find_package(X11 REQUIRED)
 
 if (ENABLE_HTML)
     if (USE_SYSTEM_CEF)
+        # This is the CEF package from the casparcg PPA, its version is independent of the
+        # bundled CEF in CEF.cmake.
         set(CEF_LIB_PATH "/usr/lib/casparcg-cef-142")
 
         add_library(CEF::CEF INTERFACE IMPORTED)
@@ -76,10 +78,11 @@ if (ENABLE_HTML)
             "${CEF_LIB_PATH}/libcef_dll_wrapper.a"
         )
     else()
+        include(CEF)
         casparcg_add_external_project(cef)
         ExternalProject_Add(cef
-            URL ${CASPARCG_DOWNLOAD_MIRROR}/cef/cef_binary_142.0.17+g60aac24+chromium-142.0.7444.176_linux64_minimal.tar.bz2
-            URL_HASH SHA256=1d89e19b2f446105f9a1fe6fdc96bced86249b5884241dcc4013b7c94dabf424
+            URL ${CEF_LINUX64_URL}
+            URL_HASH SHA256=${CEF_LINUX64_SHA256}
             DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
             CMAKE_ARGS -DUSE_SANDBOX=Off
             INSTALL_COMMAND ""
@@ -116,8 +119,6 @@ if (ENABLE_HTML)
 
         install(FILES ${SOURCE_DIR}/Release/chrome-sandbox TYPE LIB)
         install(FILES ${SOURCE_DIR}/Release/libcef.so TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/libEGL.so TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/libGLESv2.so TYPE LIB)
         install(FILES ${SOURCE_DIR}/Release/libvk_swiftshader.so TYPE LIB)
         install(FILES ${SOURCE_DIR}/Release/libvulkan.so.1 TYPE LIB)
         install(FILES ${SOURCE_DIR}/Release/v8_context_snapshot.bin TYPE LIB)
