@@ -91,6 +91,22 @@ You will then find a folder called `casparcg_server` which should contain everyt
 
 _Note: if you ran docker with sudo, CasparCG server will not be able to run without sudo out of the box. For security reasons we do not recommend to run CasparCG with sudo. Instead you can use chown to change the ownership of the CasparCG Server folder._
 
+### Building RPM packages for Fedora
+
+The RPM packages are built from `tools/linux/rpm/casparcg-server.spec`, and the script `tools/linux/rpm/build-rpm` does everything: it installs the build dependencies, creates the source tarball from the current commit and runs `rpmbuild`. Fedora 44 on x86_64 is supported.
+
+1. `git clone https://github.com/CasparCG/server casparcg-server`
+2. `cd casparcg-server`
+3. `./tools/linux/rpm/build-rpm`
+
+It uses `sudo` for the dependencies, or none when run as root. The packages are written to `dist/rpm`. Any other option is passed on to `rpmbuild`, so `./tools/linux/rpm/build-rpm --without omt` builds without the OMT runtime, and `--without html` without CEF. Changes that are not committed are not built.
+
+The same script is what the GitHub Actions workflow runs in a `fedora:44` container. To use it without installing anything on your system, run `podman run --rm -v "$PWD:/src:Z" -w /src fedora:44 ./tools/linux/rpm/build-rpm`.
+
+CEF and the OMT runtime are downloaded while the package is built, which is why it needs network access, and is not suitable for Koji or a default Copr.
+
+The package installs CEF and the OMT runtime into `/usr/lib64/casparcg-server`, away from the libraries of Fedora. Fedora's `ffmpeg-free` cannot decode H.264 and HEVC. Replace it with the FFmpeg of RPM Fusion for that, which uses the same library versions.
+
 ## Development
 
 Before beginning, check the build options section below, to decide if you want to use any to simplify or customise your build.
@@ -122,4 +138,6 @@ If all goes to plan, a folder called 'staging' has been created with everything 
 
 -DDIAG_FONT_PATH - Specify an alternate path/font to use for the DIAG window. On linux, this will often want to be set to an absolute path of a font
 
--DCASPARCG_BINARY_NAME=casparcg-server - (Linux only) generate the executable with the specified name. This also reconfigures the install target to be a bit more friendly with system package managers.
+-DCASPARCG_BINARY_NAME=casparcg-server - (Linux only) generate the executable with the specified name. This also reconfigures the install target to be a bit more friendly with system package managers, by installing CEF and the OMT runtime into a directory named after the executable inside the library directory of your system.
+
+-DENABLE_WERROR=OFF - (Linux only, default ON) do not treat compiler warnings as errors. This is for packaging, where the compiler and its warning flags are not the ones the code was tested with.

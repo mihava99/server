@@ -1,0 +1,79 @@
+#!/bin/bash
+# Builds the CasparCG Server RPM packages for Fedora from the current commit.
+#
+# Run it from a checkout on Fedora, as a normal user (sudo installs the build dependencies) or
+# as root, for example in a fedora container. The packages are written to dist/rpm.
+#
+#   tools/linux/rpm/build-rpm [--skip-deps] [rpmbuild options]
+#
+# --skip-deps       do not install the build dependencies, they are already there
+# rpmbuild options  for example "--without html" or "--without omt", see casparcg-server.spec
+#
+# Only committed changes are built, because the source tarball is made with git archive.
+# The build downloads CEF and the OMT sources, so it needs network access.
+
+set -euo pipefail
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+spec="$repo/tools/linux/rpm/casparcg-server.spec"
+out="$repo/dist/rpm"
+topdir="$out/rpmbuild"
+
+install_deps=1
+if [ "${1:-}" = "--skip-deps" ]; then
+    install_deps=0
+    shift
+fi
+
+# The checkout can belong to another user, for example in a container job.
+repo_git() {
+    git -c safe.directory="$repo" -C "$repo" "$@"
+}
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+# --- Version -------------------------------------------------------------------------------
+
+cmake_version() {
+    sed -n "s/^set(CONFIG_VERSION_$1 \([0-9]*\))\$/\1/p" "$repo/src/CMakeLists.txt"
+}
+
+version="$(cmake_version MAJOR).$(cmake_version MINOR).$(cmake_version BUG)"
+
+# --- Build dependencies --------------------------------------------------------------------
+
+if [ "$install_deps" -eq 1 ]; then
+    as_root dnf -y install rpm-build git-core
+
+    # rpmspec leaves out the dependencies of the features that are switched off with "--without".
+    mapfile -t build_requires < <(rpmspec --query --buildrequires "$@" "$spec")
+    as_root dnf -y install "${build_requires[@]}"
+fi
+
+commit=$(repo_git rev-parse --short=7 HEAD)
+
+if [ -n "$(repo_git status --porcelain --untracked-files=no)" ]; then
+    echo "warning: there are uncommitted changes, they are not part of the package" >&2
+fi
+
+# --- Build ---------------------------------------------------------------------------------
+
+rm -rf "$topdir"
+mkdir -p "$topdir/SOURCES"
+
+repo_git archive --format=tar.gz --prefix="casparcg-server-$version/" \
+    --output="$topdir/SOURCES/casparcg-server-$version.tar.gz" HEAD
+
+rpmbuild -ba "$spec" \
+    --define "_topdir $topdir" \
+    --define "casparcg_version $version" \
+    --define "casparcg_commit $commit" \
+    "$@"
+
+find "$topdir/RPMS" "$topdir/SRPMS" -name '*.rpm' -exec cp -v {} "$out/" \;

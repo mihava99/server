@@ -17,6 +17,7 @@ set(USE_SYSTEM_CEF ON CACHE BOOL "Use the version of cef from your OS (only test
 set(CASPARCG_BINARY_NAME "casparcg" CACHE STRING "Custom name of the binary to build (this disables some install files)")
 set(ENABLE_AVX2 OFF CACHE BOOL "Enable the AVX2 instruction set (requires a CPU that supports it)")
 set(ENABLE_VULKAN OFF CACHE BOOL "Enable Vulkan support")
+set(ENABLE_WERROR ON CACHE BOOL "Treat compiler warnings as errors (turn off when packaging with a newer compiler or extra warning flags)")
 
 # Determine build (target) platform
 SET (PLATFORM_FOLDER_NAME "linux")
@@ -27,6 +28,20 @@ IF (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	SET_PROPERTY (CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 ENDIF ()
 MARK_AS_ADVANCED (CMAKE_INSTALL_PREFIX)
+
+# Where the bundled shared libraries (CEF and the OMT runtime) are installed, relative to the
+# install prefix. The portable folder keeps them in lib, next to the run.sh that points at it.
+# A build for a system package manager gets a private directory in the platform's library
+# directory (lib64 on Fedora), and the binary is given an rpath to it.
+# This is decided here, before the dependencies are found, because their CMake config files
+# can change CMAKE_INSTALL_LIBDIR.
+if ("${CASPARCG_BINARY_NAME}" STREQUAL "casparcg")
+    set(CASPARCG_INSTALL_LIBDIR "lib")
+else ()
+    include(GNUInstallDirs)
+    set(CASPARCG_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}/${CASPARCG_BINARY_NAME}")
+    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CASPARCG_INSTALL_LIBDIR}")
+endif ()
 
 if (USE_STATIC_BOOST)
 	SET (Boost_USE_STATIC_LIBS ON)
@@ -111,18 +126,18 @@ if (ENABLE_HTML)
             "${BINARY_DIR}/libcef_dll_wrapper/libcef_dll_wrapper.a"
         )
 
-        install(DIRECTORY ${SOURCE_DIR}/Resources/locales TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Resources/chrome_100_percent.pak TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Resources/chrome_200_percent.pak TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Resources/icudtl.dat TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Resources/resources.pak TYPE LIB)
+        install(DIRECTORY ${SOURCE_DIR}/Resources/locales DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Resources/chrome_100_percent.pak DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Resources/chrome_200_percent.pak DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Resources/icudtl.dat DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Resources/resources.pak DESTINATION ${CASPARCG_INSTALL_LIBDIR})
 
-        install(FILES ${SOURCE_DIR}/Release/chrome-sandbox TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/libcef.so TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/libvk_swiftshader.so TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/libvulkan.so.1 TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/v8_context_snapshot.bin TYPE LIB)
-        install(FILES ${SOURCE_DIR}/Release/vk_swiftshader_icd.json TYPE LIB)
+        install(FILES ${SOURCE_DIR}/Release/chrome-sandbox DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Release/libcef.so DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Release/libvk_swiftshader.so DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Release/libvulkan.so.1 DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Release/v8_context_snapshot.bin DESTINATION ${CASPARCG_INSTALL_LIBDIR})
+        install(FILES ${SOURCE_DIR}/Release/vk_swiftshader_icd.json DESTINATION ${CASPARCG_INSTALL_LIBDIR})
     endif()
 endif ()
 
@@ -171,7 +186,10 @@ ENDIF ()
 
 ADD_COMPILE_OPTIONS (-fnon-call-exceptions) # Allow signal handler to throw exception
 
-ADD_COMPILE_OPTIONS (-Wno-deprecated-declarations -Wno-write-strings -Wno-multichar -Wno-cpp -Werror)
+ADD_COMPILE_OPTIONS (-Wno-deprecated-declarations -Wno-write-strings -Wno-multichar -Wno-cpp)
+IF (ENABLE_WERROR)
+    ADD_COMPILE_OPTIONS (-Werror)
+ENDIF ()
 
 IF (ENABLE_VULKAN)
     ADD_COMPILE_OPTIONS (-Wno-nonnull -Wno-nullability-completeness)
