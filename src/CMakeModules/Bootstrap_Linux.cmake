@@ -80,18 +80,12 @@ find_package(X11 REQUIRED)
 
 if (ENABLE_HTML)
     if (USE_SYSTEM_CEF)
-        # This is the CEF package from the casparcg PPA, its version is independent of the
-        # bundled CEF in CEF.cmake.
-        set(CEF_LIB_PATH "/usr/lib/casparcg-cef-142")
+        # Provides CasparCG::CEF, with include dir, CEF_API_VERSION, libs and rpath already set
+        find_package(casparcg-cef-api15000 CONFIG REQUIRED)
 
+        # ALIAS of a non-global imported target needs cmake 3.18
         add_library(CEF::CEF INTERFACE IMPORTED)
-        target_include_directories(CEF::CEF INTERFACE
-            "/usr/include/casparcg-cef-142"
-        )
-        target_link_libraries(CEF::CEF INTERFACE
-            "-Wl,-rpath,${CEF_LIB_PATH} ${CEF_LIB_PATH}/libcef.so"
-            "${CEF_LIB_PATH}/libcef_dll_wrapper.a"
-        )
+        target_link_libraries(CEF::CEF INTERFACE CasparCG::CEF)
     else()
         include(CEF)
         casparcg_add_external_project(cef)
@@ -99,7 +93,8 @@ if (ENABLE_HTML)
             URL ${CEF_LINUX64_URL}
             URL_HASH SHA256=${CEF_LINUX64_SHA256}
             DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
-            CMAKE_ARGS -DUSE_SANDBOX=Off
+            # api_version must match CEF_API_VERSION below
+            CMAKE_ARGS -DUSE_SANDBOX=Off -Dapi_version=15000
             INSTALL_COMMAND ""
             BUILD_BYPRODUCTS
                 "<SOURCE_DIR>/Release/libcef.so"
@@ -117,6 +112,7 @@ if (ENABLE_HTML)
         ExternalProject_Get_Property(cef BINARY_DIR)
 
         add_library(CEF::CEF INTERFACE IMPORTED)
+        target_compile_definitions(CEF::CEF INTERFACE CEF_API_VERSION=15000)
         target_include_directories(CEF::CEF INTERFACE
             "${SOURCE_DIR}"
         )
