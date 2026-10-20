@@ -32,6 +32,8 @@ This needs, in addition to the normal build tools:
 
 `./tools/linux/install-dependencies` installs all of these on Ubuntu. Configure with `-DOMT_BUILD_FROM_SOURCE=OFF` to skip the OMT runtime. The server still builds and runs, but OMT can only be used once libomt has been installed some other way.
 
+The server only loads libomt when OMT is used, from the system library path or from the folder it was started from, so libomt can also be an optional package that is installed next to the server: see [the libomt packages](#the-libomt-packages) for the RPM and deb packages that are built from this repository. Without libomt the server works, and an OMT consumer or producer reports that libomt was not found.
+
 To move to a newer upstream version, change the revisions at the top of [OMT.cmake](./src/CMakeModules/OMT.cmake), or override them with `-DOMT_LIBVMX_REVISION`, `-DOMT_LIBOMTNET_REVISION` and `-DOMT_LIBOMT_REVISION`.
 
 At runtime on Linux, libomt loads ICU (`libicuuc` and `libicui18n`) and Avahi (`libavahi-client`) from the system.
@@ -91,21 +93,30 @@ You will then find a folder called `casparcg_server` which should contain everyt
 
 _Note: if you ran docker with sudo, CasparCG server will not be able to run without sudo out of the box. For security reasons we do not recommend to run CasparCG with sudo. Instead you can use chown to change the ownership of the CasparCG Server folder._
 
-### Building RPM packages for Fedora
+### Building RPM packages
 
-The RPM packages are built from `tools/linux/rpm/casparcg-server.spec`, and the script `tools/linux/rpm/build-rpm` does everything: it installs the build dependencies, creates the source tarball from the current commit and runs `rpmbuild`. Fedora 44 on x86_64 is supported.
+The RPM packages are built from the spec files in `tools/linux/rpm`, and the script `tools/linux/rpm/build-rpm` does everything: it installs the build dependencies, creates the source tarball from the current commit and runs `rpmbuild`. The server package is built on Fedora 44 on x86_64. The libomt package (see below) is built for Fedora 44 and 45, AlmaLinux 9 and 10 and Rocky Linux 9 and 10.
 
 1. `git clone https://github.com/CasparCG/server casparcg-server`
 2. `cd casparcg-server`
 3. `./tools/linux/rpm/build-rpm`
 
-It uses `sudo` for the dependencies, or none when run as root. The packages are written to `dist/rpm`. Any other option is passed on to `rpmbuild`, so `./tools/linux/rpm/build-rpm --without omt` builds without the OMT runtime, and `--without html` without CEF. Changes that are not committed are not built.
+It uses `sudo` for the dependencies, or none when run as root. The packages are written to `dist/rpm`. `--package` chooses what to build: `casparcg-server` (the default), `libomt` or `all`. Any other option is passed on to `rpmbuild`, so `./tools/linux/rpm/build-rpm --without html` builds the server without CEF. Changes that are not committed are not built.
 
-The same script is what the GitHub Actions workflow runs in a `fedora:44` container. To use it without installing anything on your system, run `podman run --rm -v "$PWD:/src:Z" -w /src fedora:44 ./tools/linux/rpm/build-rpm`.
+The same script is what the GitHub Actions workflow runs in containers. To use it without installing anything on your system, run `podman run --rm -v "$PWD:/src:Z" -w /src fedora:44 ./tools/linux/rpm/build-rpm`.
 
-CEF and the OMT runtime are downloaded while the package is built, which is why it needs network access, and is not suitable for Koji or a default Copr.
+CEF is downloaded while the server package is built, which is why it needs network access, and is not suitable for Koji or a default Copr.
 
-The package installs CEF and the OMT runtime into `/usr/lib64/casparcg-server`, away from the libraries of Fedora. Fedora's `ffmpeg-free` cannot decode H.264 and HEVC. Replace it with the FFmpeg of RPM Fusion for that, which uses the same library versions.
+The server package installs CEF into `/usr/lib64/casparcg-server`, away from the libraries of Fedora. Fedora's `ffmpeg-free` cannot decode H.264 and HEVC. Replace it with the FFmpeg of RPM Fusion for that, which uses the same library versions.
+
+### The libomt packages
+
+OMT is optional. The server packages do not contain libomt, they only suggest it. Installing the `libomt` package next to the server is all that OMT needs, and removing it disables OMT again. No rebuild of the server is needed.
+
+- RPM (Fedora, AlmaLinux, Rocky Linux): `./tools/linux/rpm/build-rpm --package libomt`, then `sudo dnf install dist/rpm/libomt-*.rpm`. It is built from `tools/linux/rpm/libomt.spec`. On AlmaLinux and Rocky Linux the script enables the CRB repository for some of the development packages.
+- deb (Ubuntu 24.04 and later): `./tools/linux/deb/build-libomt`, then `sudo apt install ./dist/deb/libomt_*.deb`. Debian has no .NET SDK in its archive, so it is not built there.
+
+Both build libomt and libvmx from source with the same CMake module as the server (`tools/linux/libomt/CMakeLists.txt` uses `src/CMakeModules/OMT.cmake`), so the upstream revisions are pinned in one place. That needs network access: git clones the sources from GitHub and `dotnet` restores NuGet packages from nuget.org, and so it is not suitable for Koji, a default Copr or a Launchpad PPA build. The version of the packages is the version of libomt: when the revisions in `OMT.cmake` change, change the version in `tools/linux/rpm/libomt.spec` and `tools/linux/deb/libomt/debian/changelog` too. The RPM build checks it.
 
 ## Development
 
