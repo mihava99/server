@@ -64,7 +64,8 @@ enable OMT in the server, no rebuild of the server is needed.
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export DOTNET_NOLOGO=1
 
-%cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+# The project enables no language, so CMake does not know about lib64 on its own.
+%cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=%{_lib}
 %cmake_build
 
 # The revision of libomt that OMT.cmake pins must be the version that this package is named after.
