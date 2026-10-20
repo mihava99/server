@@ -1,29 +1,58 @@
 #!/bin/bash
-# Builds the CasparCG Server RPM packages for Fedora from the current commit.
+# Builds the CasparCG Server RPM packages from the current commit, on Fedora or on a distribution
+# that is built from RHEL such as AlmaLinux and Rocky Linux.
 #
-# Run it from a checkout on Fedora, as a normal user (sudo installs the build dependencies) or
-# as root, for example in a fedora container. The packages are written to dist/rpm.
+# Run it from a checkout, as a normal user (sudo installs the build dependencies) or as root, for
+# example in a container. The packages are written to dist/rpm.
 #
-#   tools/linux/rpm/build-rpm [--skip-deps] [rpmbuild options]
+#   tools/linux/rpm/build-rpm [--skip-deps] [--package casparcg-server|libomt|all] [rpmbuild options]
 #
 # --skip-deps       do not install the build dependencies, they are already there
-# rpmbuild options  for example "--without html" or "--without omt", see casparcg-server.spec
+# --package         what to build: the server (the default), the optional libomt package that
+#                   enables OMT in the server, or both
+# rpmbuild options  for example "--without html", see casparcg-server.spec
 #
-# Only committed changes are built, because the source tarball is made with git archive.
-# The build downloads CEF and the OMT sources, so it needs network access.
+# Only committed changes are built, because the source tarballs are made with git archive.
+# The server build downloads CEF, and the libomt build clones the OMT sources and restores NuGet
+# packages, so both need network access.
 
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-spec="$repo/tools/linux/rpm/casparcg-server.spec"
+specs="$repo/tools/linux/rpm"
 out="$repo/dist/rpm"
 topdir="$out/rpmbuild"
 
 install_deps=1
-if [ "${1:-}" = "--skip-deps" ]; then
-    install_deps=0
-    shift
-fi
+package=casparcg-server
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-deps)
+            install_deps=0
+            shift
+            ;;
+        --package)
+            package=${2:?--package needs a value}
+            shift 2
+            ;;
+        --package=*)
+            package=${1#--package=}
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+case "$package" in
+    casparcg-server | libomt) packages=("$package") ;;
+    all) packages=(libomt casparcg-server) ;;
+    *)
+        echo "unknown package '$package', use casparcg-server, libomt or all" >&2
+        exit 2
+        ;;
+esac
 
 # The checkout can belong to another user, for example in a container job.
 repo_git() {
@@ -44,36 +73,81 @@ cmake_version() {
     sed -n "s/^set(CONFIG_VERSION_$1 \([0-9]*\))\$/\1/p" "$repo/src/CMakeLists.txt"
 }
 
-version="$(cmake_version MAJOR).$(cmake_version MINOR).$(cmake_version BUG)"
-
-# --- Build dependencies --------------------------------------------------------------------
-
-if [ "$install_deps" -eq 1 ]; then
-    as_root dnf -y install rpm-build git-core
-
-    # rpmspec leaves out the dependencies of the features that are switched off with "--without".
-    mapfile -t build_requires < <(rpmspec --query --buildrequires "$@" "$spec")
-    as_root dnf -y install "${build_requires[@]}"
-fi
-
+server_version="$(cmake_version MAJOR).$(cmake_version MINOR).$(cmake_version BUG)"
 commit=$(repo_git rev-parse --short=7 HEAD)
 
 if [ -n "$(repo_git status --porcelain --untracked-files=no)" ]; then
     echo "warning: there are uncommitted changes, they are not part of the package" >&2
 fi
 
+# --- Build dependencies --------------------------------------------------------------------
+
+install_build_dependencies() {
+    local spec=$1
+    shift
+
+    as_root dnf -y install rpm-build git-core
+
+    # Some development packages of RHEL and its rebuilds are in the CodeReady Linux Builder
+    # repository, which is off by default.
+    if grep -qiE '^ID_LIKE=.*rhel' /etc/os-release; then
+        as_root dnf -y install dnf-plugins-core
+        as_root dnf config-manager --set-enabled crb
+    fi
+
+    # rpmspec leaves out the dependencies of the features that are switched off with "--without".
+    local build_requires
+    mapfile -t build_requires < <(rpmspec --query --buildrequires "$@" "$spec")
+    as_root dnf -y install "${build_requires[@]}"
+}
+
 # --- Build ---------------------------------------------------------------------------------
 
 rm -rf "$topdir"
 mkdir -p "$topdir/SOURCES"
+mkdir -p "$out"
 
-repo_git archive --format=tar.gz --prefix="casparcg-server-$version/" \
-    --output="$topdir/SOURCES/casparcg-server-$version.tar.gz" HEAD
+build_casparcg_server() {
+    local spec="$specs/casparcg-server.spec"
 
-rpmbuild -ba "$spec" \
-    --define "_topdir $topdir" \
-    --define "casparcg_version $version" \
-    --define "casparcg_commit $commit" \
-    "$@"
+    if [ "$install_deps" -eq 1 ]; then
+        install_build_dependencies "$spec" "$@"
+    fi
+
+    repo_git archive --format=tar.gz --prefix="casparcg-server-$server_version/" \
+        --output="$topdir/SOURCES/casparcg-server-$server_version.tar.gz" HEAD
+
+    rpmbuild -ba "$spec" \
+        --define "_topdir $topdir" \
+        --define "casparcg_version $server_version" \
+        --define "casparcg_commit $commit" \
+        "$@"
+}
+
+# libomt has a version of its own, which the spec states. The sources it needs are the wrapper
+# project and the two CMake modules that build the OMT runtime.
+build_libomt() {
+    local spec="$specs/libomt.spec"
+
+    if [ "$install_deps" -eq 1 ]; then
+        install_build_dependencies "$spec" "$@"
+    fi
+
+    local libomt_version
+    libomt_version=$(rpmspec --query --queryformat '%{version}\n' "$spec" | head -n 1)
+
+    repo_git archive --format=tar.gz --prefix="libomt-$libomt_version/" \
+        --output="$topdir/SOURCES/libomt-$libomt_version.tar.gz" HEAD \
+        tools/linux/libomt src/CMakeModules/OMT.cmake src/CMakeModules/CasparCG_Util.cmake
+
+    rpmbuild -ba "$spec" --define "_topdir $topdir" "$@"
+}
+
+for name in "${packages[@]}"; do
+    case "$name" in
+        casparcg-server) build_casparcg_server "$@" ;;
+        libomt) build_libomt "$@" ;;
+    esac
+done
 
 find "$topdir/RPMS" "$topdir/SRPMS" -name '*.rpm' -exec cp -v {} "$out/" \;
