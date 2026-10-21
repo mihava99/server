@@ -1,0 +1,194 @@
+name: Build Linux RPM
+
+on:
+    push:
+        # branches: [ "master" ]
+    pull_request:
+        branches: ["master"]
+
+jobs:
+    # The server, with CEF. OMT is not part of it, see the libomt package below.
+    server:
+        name: Server on Fedora ${{ matrix.release }} ${{ matrix.arch }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - release: 44
+                      arch: x86_64
+                      os: ubuntu-latest
+
+        runs-on: ${{ matrix.os }}
+        container: fedora:${{ matrix.release }}
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+            # Before the checkout, so that it gets a real git checkout, which the RPM build needs
+            - name: Install git
+              run: dnf -y install git-core
+
+            - uses: actions/checkout@v7
+
+            # The same script is used to build on a local Fedora
+            - name: Build the RPM packages
+              run: ./tools/linux/rpm/build-rpm --package casparcg-server
+              env:
+                  CI: 1
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: casparcg-server-fedora-${{ matrix.release }}-${{ matrix.arch }}
+                  path: dist/rpm/*.rpm
+
+    # The optional package that enables OMT in the server. It is built for every distribution
+    # that the server is meant for, because the packages of a distribution are built against its
+    # own libraries.
+    libomt:
+        name: libomt on ${{ matrix.name }} ${{ matrix.arch }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - { name: fedora-44, image: "fedora:44", arch: x86_64, os: ubuntu-latest }
+                    - { name: fedora-45, image: "fedora:45", arch: x86_64, os: ubuntu-latest }
+                    - { name: almalinux-9, image: "almalinux:9", arch: x86_64, os: ubuntu-latest }
+                    - { name: almalinux-10, image: "almalinux:10", arch: x86_64, os: ubuntu-latest }
+                    - { name: rocky-9, image: "rockylinux/rockylinux:9", arch: x86_64, os: ubuntu-latest }
+                    - { name: rocky-10, image: "rockylinux/rockylinux:10", arch: x86_64, os: ubuntu-latest }
+                    # The OMT runtime has not been built on arm64 before.
+                    - { name: fedora-44, image: "fedora:44", arch: aarch64, os: ubuntu-24.04-arm, experimental: true }
+
+        runs-on: ${{ matrix.os }}
+        container: ${{ matrix.image }}
+        continue-on-error: ${{ matrix.experimental == true }}
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+            - name: Install git
+              run: dnf -y install git-core
+
+            - uses: actions/checkout@v7
+
+            - name: Build the RPM package
+              run: ./tools/linux/rpm/build-rpm --package libomt
+              env:
+                  CI: 1
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: libomt-${{ matrix.name }}-${{ matrix.arch }}
+                  path: dist/rpm/*.rpm
+
+    # In a clean container, to see that the package finds every library it needs by itself.
+    # The build container has all the development packages installed, which hides missing dependencies.
+    libomt-install:
+        name: Install libomt on ${{ matrix.name }} ${{ matrix.arch }}
+        needs: libomt
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - { name: fedora-44, image: "fedora:44", arch: x86_64, os: ubuntu-latest }
+                    - { name: fedora-45, image: "fedora:45", arch: x86_64, os: ubuntu-latest }
+                    - { name: almalinux-9, image: "almalinux:9", arch: x86_64, os: ubuntu-latest }
+                    - { name: almalinux-10, image: "almalinux:10", arch: x86_64, os: ubuntu-latest }
+                    - { name: rocky-9, image: "rockylinux/rockylinux:9", arch: x86_64, os: ubuntu-latest }
+                    - { name: rocky-10, image: "rockylinux/rockylinux:10", arch: x86_64, os: ubuntu-latest }
+                    - { name: fedora-44, image: "fedora:44", arch: aarch64, os: ubuntu-24.04-arm, experimental: true }
+
+        runs-on: ${{ matrix.os }}
+        container: ${{ matrix.image }}
+        continue-on-error: ${{ matrix.experimental == true }}
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  name: libomt-${{ matrix.name }}-${{ matrix.arch }}
+
+            - name: Show what the package contains
+              run: |
+                  rpm --query --package --info ./libomt-[0-9]*.${{ matrix.arch }}.rpm
+                  rpm --query --package --requires ./libomt-[0-9]*.${{ matrix.arch }}.rpm
+                  rpm --query --package --list ./libomt-[0-9]*.${{ matrix.arch }}.rpm
+
+            - name: Install the package
+              run: dnf -y install ./libomt-[0-9]*.${{ matrix.arch }}.rpm
+
+            - name: Check that every library is found
+              run: |
+                  for library in libomt.so libvmx.so; do
+                      ldd "$(rpm --query --list libomt | grep "/$library\$")" | tee ldd.txt
+                      if grep 'not found' ldd.txt; then exit 1; fi
+                  done
+
+            # The server looks libomt up by its name on the library path of the system, and libomt needs
+            # ICU, libvmx and the functions that the server calls
+            - name: Check that the server can load libomt
+              run: |
+                  dnf -y install python3
+                  python3 - <<'PYTHON'
+                  import ctypes
+                  libomt = ctypes.CDLL("libomt.so")
+                  ctypes.CDLL("libvmx.so")
+                  for name in ("omt_discovery_getaddresses", "omt_receive_create", "omt_receive", "omt_send_create", "omt_send"):
+                      getattr(libomt, name)
+                  PYTHON
+
+    # The server is complete without libomt, and installing libomt later is all that OMT needs.
+    server-install:
+        name: Install the server on Fedora ${{ matrix.release }} ${{ matrix.arch }}
+        needs: [server, libomt]
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - release: 44
+                      arch: x86_64
+                      os: ubuntu-latest
+
+        runs-on: ${{ matrix.os }}
+        container: fedora:${{ matrix.release }}
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  name: casparcg-server-fedora-${{ matrix.release }}-${{ matrix.arch }}
+
+            - uses: actions/download-artifact@v4
+              with:
+                  name: libomt-fedora-${{ matrix.release }}-${{ matrix.arch }}
+
+            - name: Show what the package contains
+              run: |
+                  rpm --query --package --info ./casparcg-server-[0-9]*.${{ matrix.arch }}.rpm
+                  rpm --query --package --requires ./casparcg-server-[0-9]*.${{ matrix.arch }}.rpm
+                  rpm --query --package --list ./casparcg-server-[0-9]*.${{ matrix.arch }}.rpm
+
+            - name: Install the server alone
+              run: dnf -y install ./casparcg-server-[0-9]*.${{ matrix.arch }}.rpm
+
+            - name: Check that every library is found
+              run: |
+                  ldd /usr/bin/casparcg-server | tee ldd.txt
+                  if grep 'not found' ldd.txt; then exit 1; fi
+
+            - name: Check that libomt is not installed
+              run: |
+                  if rpm --query libomt; then exit 1; fi
+                  if ldconfig --print-cache | grep -w libomt.so; then exit 1; fi
+
+            - name: Install libomt
+              run: dnf -y install ./libomt-[0-9]*.${{ matrix.arch }}.rpm
+
+            - name: Check that libomt is on the library path now
+              run: ldconfig --print-cache | grep -w libomt.so
