@@ -8,9 +8,11 @@
 #  - Compare the files that Bootstrap_Linux.cmake and Bootstrap_Windows.cmake bundle with the
 #    Release and Resources folders of the new archives. CEF adds and removes files between
 #    versions.
-set(CEF_VERSION "154.0.34+g14c5a08+chromium-154.0.8037.98")
-set(CEF_LINUX64_SHA256 "e87e2c76304372dd28b899ceb6efa4b353f52700594ddc358a8237ec07ec6492")
-set(CEF_WINDOWS64_SHA256 "c81c34d048d87276f4a18f0b000206710a1709bb67dd658948b87100e1a538da")
+set(CEF_VERSION "156.0.14+g4fa4ab5+chromium-156.0.8078.48")
+set(CEF_LINUX64_SHA256 "4191ac920a91a052eba04afb6ed830d47aed46a3e246c434a2f062c23588dc8a")
+set(CEF_WINDOWS64_SHA256 "99f8a6dffd47417e0caee7845a98c549b41f1d4246cd715dec843ca4b699ee57")
+
+
 
 set(CEF_DOWNLOAD_BASE_URL "https://cef-builds.spotifycdn.com" CACHE STRING
     "Where to download CEF from, this can be a mirror with the same file names")
