@@ -242,7 +242,7 @@ if (ENABLE_HTML)
 		URL_HASH SHA256=${CEF_WINDOWS64_SHA256}
 		DOWNLOAD_DIR ${CASPARCG_DOWNLOAD_CACHE}
 		# api_version must match CEF_API_VERSION below
-		CMAKE_ARGS -DUSE_SANDBOX=Off -Dapi_version=15000 -DCEF_RUNTIME_LIBRARY_FLAG=/MD ${EXTERNAL_CMAKE_ARGS}
+		CMAKE_ARGS -DUSE_SANDBOX=Off -Dapi_version=15600 -DCEF_RUNTIME_LIBRARY_FLAG=/MD ${EXTERNAL_CMAKE_ARGS}
 		INSTALL_COMMAND ""
 	)
 	ExternalProject_Get_Property(cef SOURCE_DIR)
@@ -250,7 +250,7 @@ if (ENABLE_HTML)
 
     add_library(CEF::CEF INTERFACE IMPORTED)
 	add_dependencies(CEF::CEF cef)
-    target_compile_definitions(CEF::CEF INTERFACE CEF_API_VERSION=15000)
+    target_compile_definitions(CEF::CEF INTERFACE CEF_API_VERSION=15600)
     target_include_directories(CEF::CEF INTERFACE
         "${SOURCE_DIR}"
     )
